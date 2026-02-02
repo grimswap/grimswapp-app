@@ -1,0 +1,422 @@
+@import "tailwindcss";
+
+/* Import fonts - Dark Arts Typography */
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=Fira+Code:wght@400;500;600&display=swap');
+
+/* ============================================
+   THEME CONFIGURATION - TailwindCSS v4
+   The Dark Arts of DeFi
+   ============================================ */
+
+@theme {
+  /* ========== Core Palette ========== */
+  --color-void-black: oklch(0% 0 0);
+  --color-obsidian: oklch(7% 0 0);
+  --color-charcoal: oklch(12% 0 0);
+  --color-shadow-gray: oklch(15% 0 0);
+
+  /* ========== Accent Colors ========== */
+  --color-arcane-purple: oklch(58% 0.22 285);
+  --color-purple-deep: oklch(45% 0.25 285);
+  --color-spectral-green: oklch(85% 0.3 155);
+  --color-ethereal-cyan: oklch(80% 0.2 200);
+  --color-blood-crimson: oklch(60% 0.25 15);
+
+  /* ========== Neutrals ========== */
+  --color-ghost-white: oklch(97% 0 0);
+  --color-mist-gray: oklch(70% 0.01 250);
+
+  /* ========== Typography - Arcane Fonts ========== */
+  --font-sans: 'Crimson Text', Georgia, serif;
+  --font-display: 'Cinzel', 'Times New Roman', serif;
+  --font-mono: 'Fira Code', monospace;
+
+  /* ========== Animations ========== */
+  --animate-aurora: aurora 15s ease-in-out infinite;
+  --animate-glow-pulse: glow-pulse 3s ease-in-out infinite;
+  --animate-spin-slow: spin 8s linear infinite;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-slide-up: slide-up 0.3s ease-out;
+  --animate-slide-down: slide-down 0.2s ease-out;
+  --animate-scale-in: scale-in 0.2s ease-out;
+
+  /* ========== Animation Keyframes ========== */
+  @keyframes aurora {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+
+  @keyframes glow-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes slide-down {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+
+@layer base {
+  * {
+    @apply border-shadow-gray/20;
+  }
+
+  html {
+    @apply scroll-smooth;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-void-black text-ghost-white antialiased font-sans;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Selection */
+  ::selection {
+    @apply bg-arcane-purple/30 text-ghost-white;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-obsidian;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-arcane-purple/40 rounded-full;
+    transition: background-color 0.2s;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-arcane-purple/60;
+  }
+
+  /* Focus visible */
+  :focus-visible {
+    @apply outline-none ring-2 ring-arcane-purple/50 ring-offset-2 ring-offset-void-black;
+  }
+}
+
+/* ============================================
+   COMPONENT STYLES
+   ============================================ */
+
+@layer components {
+  /* ========== Gradient Text ========== */
+  .text-gradient-arcane {
+    @apply bg-linear-to-r from-arcane-purple via-ethereal-cyan to-spectral-green bg-clip-text text-transparent;
+  }
+
+  .text-gradient-spectral {
+    @apply bg-linear-to-r from-spectral-green to-ethereal-cyan bg-clip-text text-transparent;
+  }
+
+  .text-gradient-purple {
+    @apply bg-linear-to-r from-arcane-purple to-purple-deep bg-clip-text text-transparent;
+  }
+
+  /* ========== Glass Effects ========== */
+  .glass {
+    @apply bg-charcoal/80 backdrop-blur-xl border border-arcane-purple/10;
+  }
+
+  .glass-dark {
+    @apply bg-obsidian/90 backdrop-blur-xl border border-arcane-purple/5;
+  }
+
+  /* ========== Card Styles ========== */
+  .card-glow {
+    @apply relative overflow-hidden;
+  }
+
+  .card-glow::before {
+    content: '';
+    @apply absolute inset-0 opacity-0 transition-opacity duration-300;
+    background: radial-gradient(
+      600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      oklch(58% 0.22 285 / 0.15),
+      transparent 40%
+    );
+  }
+
+  .card-glow:hover::before {
+    @apply opacity-100;
+  }
+
+  /* ========== Noise Overlay ========== */
+  .noise-overlay {
+    @apply pointer-events-none fixed inset-0 z-50 opacity-[0.015];
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  }
+
+  /* ========== Aurora Background ========== */
+  .aurora-bg {
+    @apply fixed inset-0 -z-10 overflow-hidden;
+  }
+
+  .aurora-gradient {
+    @apply absolute w-[200%] h-[200%] animate-aurora;
+    background: linear-gradient(
+      45deg,
+      transparent 0%,
+      oklch(58% 0.22 285 / 0.1) 20%,
+      transparent 40%,
+      oklch(85% 0.3 155 / 0.08) 60%,
+      transparent 80%,
+      oklch(80% 0.2 200 / 0.1) 100%
+    );
+    background-size: 200% 200%;
+  }
+
+  /* ========== Shimmer Button ========== */
+  .shimmer-button {
+    @apply relative overflow-hidden;
+  }
+
+  .shimmer-button::before {
+    content: '';
+    @apply absolute inset-0 animate-shimmer;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      oklch(100% 0 0 / 0.1),
+      transparent
+    );
+    background-size: 200% 100%;
+  }
+
+  /* ========== Glow Buttons ========== */
+  .btn-glow-purple {
+    @apply relative;
+    box-shadow: 0 0 20px oklch(58% 0.22 285 / 0.3);
+    transition: box-shadow 0.3s ease;
+  }
+
+  .btn-glow-purple:hover {
+    box-shadow: 0 0 30px oklch(58% 0.22 285 / 0.5), 0 0 60px oklch(58% 0.22 285 / 0.2);
+  }
+
+  .btn-glow-green {
+    @apply relative;
+    box-shadow: 0 0 20px oklch(85% 0.3 155 / 0.3);
+    transition: box-shadow 0.3s ease;
+  }
+
+  .btn-glow-green:hover {
+    box-shadow: 0 0 30px oklch(85% 0.3 155 / 0.5), 0 0 60px oklch(85% 0.3 155 / 0.2);
+  }
+
+  /* ========== Ring Orbit Animation ========== */
+  .ring-orbit {
+    animation: orbit var(--orbit-duration, 10s) linear infinite;
+    animation-delay: var(--orbit-delay, 0s);
+  }
+
+  @keyframes orbit {
+    from {
+      transform: rotate(0deg) translateX(var(--orbit-radius, 80px)) rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg) translateX(var(--orbit-radius, 80px)) rotate(-360deg);
+    }
+  }
+
+  /* ========== Scanline Effect ========== */
+  .scanline {
+    @apply absolute inset-0 pointer-events-none;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      oklch(85% 0.3 155 / 0.03) 2px,
+      oklch(85% 0.3 155 / 0.03) 4px
+    );
+  }
+
+  /* ========== Pulse Ring ========== */
+  .pulse-ring {
+    @apply absolute rounded-full;
+    animation: pulse-ring 2s ease-out infinite;
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(0.8);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(2);
+      opacity: 0;
+    }
+  }
+
+  /* ========== Tooltip ========== */
+  .tooltip {
+    @apply absolute z-50 px-2 py-1 text-xs rounded-lg;
+    @apply bg-charcoal border border-arcane-purple/20;
+    @apply text-ghost-white shadow-lg;
+    @apply animate-fade-in;
+  }
+
+  /* ========== Input Styles ========== */
+  .input-glow {
+    @apply transition-shadow duration-200;
+  }
+
+  .input-glow:focus {
+    box-shadow: 0 0 0 2px oklch(58% 0.22 285 / 0.3);
+  }
+
+  /* ========== Skeleton Loading ========== */
+  .skeleton {
+    @apply relative overflow-hidden bg-shadow-gray/50 rounded;
+  }
+
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      oklch(100% 0 0 / 0.05),
+      transparent
+    );
+    animation: skeleton-shimmer 1.5s infinite;
+  }
+
+  @keyframes skeleton-shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+}
+
+/* ============================================
+   UTILITY STYLES
+   ============================================ */
+
+@layer utilities {
+  /* ========== Focus Ring ========== */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-arcane-purple/50 focus:ring-offset-2 focus:ring-offset-void-black;
+  }
+
+  /* ========== Shadow Glow Utilities ========== */
+  .shadow-glow-purple {
+    box-shadow: 0 0 20px oklch(58% 0.22 285 / 0.4);
+  }
+
+  .shadow-glow-green {
+    box-shadow: 0 0 20px oklch(85% 0.3 155 / 0.4);
+  }
+
+  .shadow-glow-cyan {
+    box-shadow: 0 0 20px oklch(80% 0.2 200 / 0.4);
+  }
+
+  .shadow-glow-crimson {
+    box-shadow: 0 0 20px oklch(60% 0.25 15 / 0.4);
+  }
+
+  /* ========== Gradient Border ========== */
+  .gradient-border {
+    @apply relative;
+  }
+
+  .gradient-border::before {
+    content: '';
+    @apply absolute inset-0 rounded-[inherit] p-px pointer-events-none;
+    background: linear-gradient(
+      135deg,
+      oklch(58% 0.22 285 / 0.5),
+      transparent 50%,
+      oklch(85% 0.3 155 / 0.5)
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  /* ========== Hover Lift ========== */
+  .hover-lift {
+    @apply transition-transform duration-200;
+  }
+
+  .hover-lift:hover {
+    @apply -translate-y-0.5;
+  }
+
+  /* ========== Blur Reveal ========== */
+  .blur-reveal {
+    @apply transition-all duration-500;
+    filter: blur(8px);
+  }
+
+  .blur-reveal.revealed {
+    filter: blur(0);
+  }
+
+  /* ========== Text Glow ========== */
+  .text-glow-purple {
+    text-shadow: 0 0 20px oklch(58% 0.22 285 / 0.5);
+  }
+
+  .text-glow-green {
+    text-shadow: 0 0 20px oklch(85% 0.3 155 / 0.5);
+  }
+
+  .text-glow-cyan {
+    text-shadow: 0 0 20px oklch(80% 0.2 200 / 0.5);
+  }
+
+  /* ========== Hide Scrollbar ========== */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* ========== Backdrop ========== */
+  .backdrop-blur-strong {
+    backdrop-filter: blur(24px) saturate(180%);
+  }
+}
