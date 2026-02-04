@@ -1,12 +1,16 @@
 import { useState, useRef, useEffect } from 'react'
 import { gsap } from 'gsap'
 import { cn } from '@/lib/utils'
-import { Settings, ArrowDown, Info } from 'lucide-react'
+import { Settings, ArrowDown, Info, Shield, Clock, Percent } from 'lucide-react'
 import { TokenInput } from './token-input'
 import { TokenSelectorModal, type Token } from './token-selector-modal'
 import { RingSelector } from './ring-selector'
+import { SettingsPanel } from './settings-panel'
 import { ShimmerButton } from '@/components/ui/shimmer-button'
+import { TransactionStatus } from '@/components/web3/transaction-status'
 import { useAccount } from 'wagmi'
+import { useSettings } from '@/hooks/use-settings'
+import { useToast } from '@/hooks/use-toast'
 
 // Default tokens
 const DEFAULT_FROM_TOKEN: Token = {
@@ -25,16 +29,21 @@ const DEFAULT_TO_TOKEN: Token = {
   balance: '1,250.00',
 }
 
+type SwapState = 'idle' | 'confirming' | 'pending' | 'success' | 'error'
+
 export function SwapCard() {
-  const { isConnected } = useAccount()
+  const { isConnected, address } = useAccount()
+  const { settings } = useSettings()
+  const { toast } = useToast()
+
   const [fromAmount, setFromAmount] = useState('')
   const [toAmount, setToAmount] = useState('')
   const [fromToken, setFromToken] = useState<Token>(DEFAULT_FROM_TOKEN)
   const [toToken, setToToken] = useState<Token>(DEFAULT_TO_TOKEN)
   const [ringSize, setRingSize] = useState(5)
-  const [isSwapping, setIsSwapping] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [slippage, setSlippage] = useState(0.5)
+  const [swapState, setSwapState] = useState<SwapState>('idle')
+  const [txHash, setTxHash] = useState<string | null>(null)
 
   // Token selector modal state
   const [tokenModalOpen, setTokenModalOpen] = useState(false)
@@ -43,20 +52,23 @@ export function SwapCard() {
   const cardRef = useRef<HTMLDivElement>(null)
   const glowRef = useRef<HTMLDivElement>(null)
 
-  // Calculate output amount (mock)
+  // Mock exchange rate
+  const exchangeRate = fromToken.symbol === 'ETH' ? 2450 : 1 / 2450
+
+  // Calculate output amount
   useEffect(() => {
     if (fromAmount && parseFloat(fromAmount) > 0) {
-      // Mock conversion rate
-      const rate = fromToken.symbol === 'ETH' ? 2450 : 1 / 2450
-      const output = parseFloat(fromAmount) * rate
+      const output = parseFloat(fromAmount) * exchangeRate
       setToAmount(output.toFixed(toToken.decimals > 6 ? 6 : 2))
     } else {
       setToAmount('')
     }
-  }, [fromAmount, fromToken, toToken])
+  }, [fromAmount, fromToken, toToken, exchangeRate])
 
   // Animate glow on swap
   useEffect(() => {
+    const isSwapping = swapState === 'pending' || swapState === 'confirming'
+
     if (isSwapping && glowRef.current) {
       gsap.to(glowRef.current, {
         opacity: 0.5,
@@ -80,19 +92,46 @@ export function SwapCard() {
         duration: 0.3,
       })
     }
-  }, [isSwapping])
+  }, [swapState])
 
   const handleSwap = async () => {
-    if (!isConnected) return
+    if (!isConnected || !address) return
 
-    setIsSwapping(true)
+    try {
+      // Step 1: Confirm in wallet
+      setSwapState('confirming')
 
-    // Simulate swap delay
-    await new Promise((resolve) => setTimeout(resolve, 3000))
+      // Simulate wallet confirmation
+      await new Promise((resolve) => setTimeout(resolve, 1500))
 
-    setIsSwapping(false)
-    setFromAmount('')
-    setToAmount('')
+      // Step 2: Transaction pending
+      setSwapState('pending')
+      const mockHash = '0x' + Array(64).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('')
+      setTxHash(mockHash)
+
+      // Simulate transaction confirmation
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+
+      // Step 3: Success
+      setSwapState('success')
+      toast.success('Swap Complete', `Swapped ${fromAmount} ${fromToken.symbol} for ${toAmount} ${toToken.symbol}`)
+
+      // Reset after delay
+      setTimeout(() => {
+        setSwapState('idle')
+        setFromAmount('')
+        setToAmount('')
+        setTxHash(null)
+      }, 3000)
+    } catch (error) {
+      setSwapState('error')
+      toast.error('Swap Failed', error instanceof Error ? error.message : 'Unknown error occurred')
+
+      setTimeout(() => {
+        setSwapState('idle')
+        setTxHash(null)
+      }, 3000)
+    }
   }
 
   const handleFlipTokens = () => {
@@ -126,13 +165,11 @@ export function SwapCard() {
 
   const handleTokenSelect = (token: Token) => {
     if (selectingFor === 'from') {
-      // If selecting same token, swap them
       if (token.address === toToken.address) {
         setToToken(fromToken)
       }
       setFromToken(token)
     } else {
-      // If selecting same token, swap them
       if (token.address === fromToken.address) {
         setFromToken(toToken)
       }
@@ -140,7 +177,18 @@ export function SwapCard() {
     }
   }
 
-  const canSwap = isConnected && fromAmount && parseFloat(fromAmount) > 0
+  const canSwap = isConnected && fromAmount && parseFloat(fromAmount) > 0 && swapState === 'idle'
+  const isSwapping = swapState !== 'idle'
+
+  // Calculate minimum received
+  const minReceived = toAmount
+    ? (parseFloat(toAmount) * (1 - settings.swap.slippageTolerance / 100)).toFixed(
+        toToken.decimals > 6 ? 6 : 2
+      )
+    : '0'
+
+  // Calculate price impact (mock)
+  const priceImpact = fromAmount && parseFloat(fromAmount) > 10 ? 0.3 : 0.1
 
   return (
     <>
@@ -162,47 +210,42 @@ export function SwapCard() {
           )}
         />
 
-        <div className="relative rounded-2xl bg-charcoal/95 backdrop-blur-xl p-6">
+        <div className="relative rounded-2xl bg-charcoal/95 backdrop-blur-xl p-5 sm:p-6">
           {/* Header */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-5">
             <h2 className="font-display text-xl text-ghost-white">
               Cast Spell
             </h2>
             <button
               onClick={() => setShowSettings(!showSettings)}
               className={cn(
-                'p-2 rounded-lg transition-colors',
+                'p-2 rounded-lg transition-all',
                 'hover:bg-white/5',
-                showSettings && 'bg-white/5'
+                showSettings && 'bg-arcane-purple/10 text-arcane-purple'
               )}
             >
-              <Settings className="w-5 h-5 text-mist-gray" />
+              <Settings className={cn('w-5 h-5', showSettings ? 'text-arcane-purple' : 'text-mist-gray')} />
             </button>
           </div>
 
           {/* Settings Panel */}
           {showSettings && (
-            <div className="mb-4 p-4 rounded-xl bg-obsidian/50 border border-arcane-purple/10">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-mist-gray">Slippage Tolerance</span>
-                <div className="flex gap-2">
-                  {[0.1, 0.5, 1.0].map((value) => (
-                    <button
-                      key={value}
-                      onClick={() => setSlippage(value)}
-                      className={cn(
-                        'px-3 py-1 rounded-lg text-sm',
-                        'border transition-colors',
-                        slippage === value
-                          ? 'bg-arcane-purple/20 border-arcane-purple text-arcane-purple'
-                          : 'bg-charcoal border-arcane-purple/20 text-mist-gray hover:border-arcane-purple/40'
-                      )}
-                    >
-                      {value}%
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <div className="mb-5">
+              <SettingsPanel />
+            </div>
+          )}
+
+          {/* Transaction Status */}
+          {swapState !== 'idle' && (
+            <div className="mb-5">
+              <TransactionStatus
+                state={swapState === 'confirming' ? 'pending' : swapState}
+                hash={txHash || undefined}
+                onClose={() => {
+                  setSwapState('idle')
+                  setTxHash(null)
+                }}
+              />
             </div>
           )}
 
@@ -214,6 +257,7 @@ export function SwapCard() {
             token={fromToken}
             onTokenSelect={() => openTokenSelector('from')}
             balance={fromToken.balance}
+            disabled={isSwapping}
             className="mb-2"
           />
 
@@ -221,12 +265,14 @@ export function SwapCard() {
           <div className="flex justify-center -my-2 relative z-10">
             <button
               onClick={handleFlipTokens}
+              disabled={isSwapping}
               className={cn(
                 'swap-arrow p-3 rounded-xl',
                 'bg-obsidian border border-arcane-purple/30',
                 'hover:border-arcane-purple/60 hover:scale-110',
                 'active:scale-95',
-                'transition-all duration-200'
+                'transition-all duration-200',
+                'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
               )}
             >
               <ArrowDown className="w-5 h-5 text-arcane-purple" />
@@ -249,28 +295,54 @@ export function SwapCard() {
           <RingSelector
             ringSize={ringSize}
             onRingSizeChange={setRingSize}
-            className="mb-6"
+            disabled={isSwapping}
+            className="mb-5"
           />
 
           {/* Price Info */}
-          {fromAmount && (
-            <div className="mb-4 p-3 rounded-xl bg-obsidian/30 border border-arcane-purple/10">
+          {fromAmount && !isSwapping && (
+            <div className="mb-5 p-3 rounded-xl bg-obsidian/30 border border-arcane-purple/10 space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-mist-gray flex items-center gap-1">
-                  <Info className="w-3 h-3" />
+                <span className="text-mist-gray flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5" />
                   Rate
                 </span>
-                <span className="text-ghost-white font-mono">
-                  1 {fromToken.symbol} = {fromToken.symbol === 'ETH' ? '2,450' : '0.00041'} {toToken.symbol}
+                <span className="text-ghost-white font-mono text-xs sm:text-sm">
+                  1 {fromToken.symbol} = {exchangeRate.toLocaleString()} {toToken.symbol}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-sm mt-2">
-                <span className="text-mist-gray">Slippage</span>
-                <span className="text-ghost-white font-mono">{slippage}%</span>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-mist-gray flex items-center gap-1.5">
+                  <Percent className="w-3.5 h-3.5" />
+                  Price Impact
+                </span>
+                <span className={cn(
+                  'font-mono text-xs sm:text-sm',
+                  priceImpact < 1 ? 'text-spectral-green' : priceImpact < 3 ? 'text-ethereal-cyan' : 'text-blood-crimson'
+                )}>
+                  {priceImpact.toFixed(2)}%
+                </span>
               </div>
-              <div className="flex items-center justify-between text-sm mt-2">
-                <span className="text-mist-gray">Privacy Level</span>
-                <span className="text-spectral-green font-mono">{ringSize} addresses</span>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-mist-gray flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" />
+                  Min. Received
+                </span>
+                <span className="text-ghost-white font-mono text-xs sm:text-sm">
+                  {minReceived} {toToken.symbol}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-mist-gray flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5" />
+                  Privacy Level
+                </span>
+                <span className="text-spectral-green font-mono text-xs sm:text-sm">
+                  {ringSize} addresses
+                </span>
               </div>
             </div>
           )}
@@ -278,15 +350,21 @@ export function SwapCard() {
           {/* Swap Button */}
           <ShimmerButton
             onClick={handleSwap}
-            disabled={!canSwap || isSwapping}
+            disabled={!canSwap}
           >
             {!isConnected
               ? 'Connect Wallet'
-              : isSwapping
-                ? 'Casting...'
-                : !fromAmount
-                  ? 'Enter Amount'
-                  : 'Transmute'}
+              : swapState === 'confirming'
+                ? 'Confirm in Wallet...'
+                : swapState === 'pending'
+                  ? 'Casting Spell...'
+                  : swapState === 'success'
+                    ? 'Spell Complete!'
+                    : swapState === 'error'
+                      ? 'Spell Failed'
+                      : !fromAmount
+                        ? 'Enter Amount'
+                        : 'Transmute'}
           </ShimmerButton>
         </div>
       </div>

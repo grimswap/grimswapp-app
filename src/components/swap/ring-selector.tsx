@@ -5,12 +5,14 @@ import { Shield, ShieldAlert, ShieldCheck } from 'lucide-react'
 interface RingSelectorProps {
   ringSize: number
   onRingSizeChange: (size: number) => void
+  disabled?: boolean
   className?: string
 }
 
 export function RingSelector({
   ringSize,
   onRingSizeChange,
+  disabled,
   className,
 }: RingSelectorProps) {
   const getPrivacyLevel = (size: number) => {
@@ -34,14 +36,16 @@ export function RingSelector({
         </div>
       </div>
 
-      <div className="flex gap-2">
+      <div className={cn('flex gap-2', disabled && 'opacity-50 pointer-events-none')}>
         {RING_SIZES.map((size) => (
           <button
             key={size}
             onClick={() => onRingSizeChange(size)}
+            disabled={disabled}
             className={cn(
               'flex-1 py-2.5 rounded-xl text-sm font-mono font-medium',
               'border transition-all duration-200',
+              'disabled:cursor-not-allowed',
               ringSize === size
                 ? 'bg-arcane-purple/20 border-arcane-purple text-arcane-purple shadow-[0_0_10px_rgba(139,92,246,0.2)]'
                 : 'bg-transparent border-mist-gray/20 text-mist-gray hover:border-mist-gray/40 hover:text-ghost-white'
