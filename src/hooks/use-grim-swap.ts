@@ -175,9 +175,7 @@ export function useGrimSwap() {
           recipient: params.recipient,
           relayer: address, // Use sender as relayer for now
           relayerFee: 0, // No relayer fee
-          amountIn: depositNote.amount,
-          minAmountOut: params.minAmountOut,
-          poolKey: BigInt(0), // Not used in current circuit
+          swapAmountOut: params.minAmountOut, // Expected output amount
         }
 
         const proofResult = await generateProof(

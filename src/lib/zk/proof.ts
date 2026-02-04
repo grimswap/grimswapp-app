@@ -1,5 +1,6 @@
 /**
  * ZK proof generation using snarkjs
+ * Uses Web Worker for non-blocking proof generation
  */
 
 import { groth16 } from 'snarkjs'
@@ -7,10 +8,72 @@ import type { Address } from 'viem'
 import type { DepositNote } from './commitment'
 import type { MerkleProof } from './merkle'
 import { formatProofForCircuit } from './merkle'
+import type { WorkerResponse } from './proof.worker'
 
 // Circuit files paths (in public directory)
 const WASM_PATH = '/circuits/privateSwap.wasm'
 const ZKEY_PATH = '/circuits/privateSwap_final.zkey'
+
+// Worker instance (singleton)
+let proofWorker: Worker | null = null
+let workerPromises: Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; onProgress?: (stage: string, progress: number) => void }> = new Map()
+
+/**
+ * Initialize the proof worker
+ */
+function getProofWorker(): Worker | null {
+  if (typeof Worker === 'undefined') {
+    return null
+  }
+
+  if (!proofWorker) {
+    try {
+      // Vite worker import
+      proofWorker = new Worker(
+        new URL('./proof.worker.ts', import.meta.url),
+        { type: 'module' }
+      )
+
+      proofWorker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        const { type, id, data, error, stage, progress } = event.data
+        const pending = workerPromises.get(id)
+
+        if (!pending) return
+
+        if (type === 'progress' && stage && progress !== undefined) {
+          pending.onProgress?.(stage, progress)
+        } else if (type === 'result') {
+          workerPromises.delete(id)
+          pending.resolve(data)
+        } else if (type === 'error') {
+          workerPromises.delete(id)
+          pending.reject(new Error(error || 'Worker error'))
+        }
+      }
+
+      proofWorker.onerror = (error) => {
+        console.error('Proof worker error:', error)
+        // Reject all pending promises
+        workerPromises.forEach((pending, id) => {
+          pending.reject(new Error('Worker crashed'))
+          workerPromises.delete(id)
+        })
+      }
+    } catch (e) {
+      console.warn('Failed to create proof worker, falling back to main thread:', e)
+      return null
+    }
+  }
+
+  return proofWorker
+}
+
+/**
+ * Generate a unique ID for worker messages
+ */
+function generateId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 /**
  * Groth16 proof in snarkjs format
@@ -32,9 +95,7 @@ export interface PublicSignals {
   recipient: Address
   relayer: Address
   relayerFee: bigint
-  amountIn: bigint
-  minAmountOut: bigint
-  poolKey: bigint // Encoded pool identifier
+  swapAmountOut: bigint
 }
 
 /**
@@ -54,9 +115,49 @@ export interface SwapParams {
   recipient: Address
   relayer: Address
   relayerFee: number // Basis points (100 = 1%)
-  amountIn: bigint
-  minAmountOut: bigint
-  poolKey: bigint
+  swapAmountOut: bigint // Expected output amount from swap
+}
+
+/**
+ * Generate proof using Web Worker (non-blocking)
+ */
+async function generateProofInWorker(
+  circuitInputs: Record<string, any>,
+  onProgress?: (stage: string, progress: number) => void
+): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
+  const worker = getProofWorker()
+
+  if (!worker) {
+    // Fallback to main thread
+    onProgress?.('Generating proof (main thread)', 0.3)
+    const { proof, publicSignals } = await groth16.fullProve(
+      circuitInputs,
+      WASM_PATH,
+      ZKEY_PATH
+    )
+    onProgress?.('Proof generated', 1.0)
+    return { proof, publicSignals }
+  }
+
+  const id = generateId()
+
+  return new Promise((resolve, reject) => {
+    workerPromises.set(id, { resolve, reject, onProgress })
+
+    worker.postMessage({
+      type: 'generate',
+      id,
+      data: { circuitInputs }
+    })
+
+    // Timeout after 60 seconds
+    setTimeout(() => {
+      if (workerPromises.has(id)) {
+        workerPromises.delete(id)
+        reject(new Error('Proof generation timed out'))
+      }
+    }, 60000)
+  })
 }
 
 /**
@@ -82,7 +183,7 @@ export async function generateProof(
     // Private inputs
     secret: note.secret.toString(),
     nullifier: note.nullifier.toString(),
-    amount: note.amount.toString(),
+    depositAmount: note.amount.toString(),
     pathElements,
     pathIndices,
 
@@ -92,24 +193,13 @@ export async function generateProof(
     recipient: BigInt(swapParams.recipient).toString(),
     relayer: BigInt(swapParams.relayer).toString(),
     relayerFee: swapParams.relayerFee.toString(),
-    amountIn: swapParams.amountIn.toString(),
-    minAmountOut: swapParams.minAmountOut.toString(),
-    poolKey: swapParams.poolKey.toString(),
+    swapAmountOut: swapParams.swapAmountOut.toString(),
   }
 
-  onProgress?.('Generating witness', 0.3)
-
   try {
-    // Generate witness and proof
-    const { proof, publicSignals } = await groth16.fullProve(
-      circuitInputs,
-      WASM_PATH,
-      ZKEY_PATH
-    )
-
-    onProgress?.('Proof generated', 1.0)
-
-    return { proof, publicSignals }
+    // Use worker for non-blocking proof generation
+    const result = await generateProofInWorker(circuitInputs, onProgress)
+    return result
   } catch (error) {
     console.error('Proof generation failed:', error)
     throw new Error(`Failed to generate proof: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -219,10 +309,9 @@ export async function generateProofForRelayer(
  * Estimate proof generation time
  */
 export function estimateProofTime(): number {
-  // Typical browser proof generation: ~1-2 seconds
-  // Native (Node.js): ~200-400ms
-  const isBrowser = typeof window !== 'undefined'
-  return isBrowser ? 1500 : 300 // milliseconds
+  // Typical browser proof generation: ~5-15 seconds
+  // With worker: same time but non-blocking
+  return 10000 // milliseconds
 }
 
 /**
@@ -230,4 +319,15 @@ export function estimateProofTime(): number {
  */
 export function supportsWebWorkers(): boolean {
   return typeof Worker !== 'undefined'
+}
+
+/**
+ * Terminate the proof worker (cleanup)
+ */
+export function terminateProofWorker(): void {
+  if (proofWorker) {
+    proofWorker.terminate()
+    proofWorker = null
+    workerPromises.clear()
+  }
 }

@@ -77,7 +77,8 @@ export function useGrimPool() {
   )
 
   /**
-   * Deposit tokens to GrimPool
+   * Deposit ETH to GrimPool
+   * Note: GrimPool is ETH-only (payable). Amount is sent as msg.value.
    */
   const deposit = useCallback(
     async (
@@ -90,6 +91,13 @@ export function useGrimPool() {
         return null
       }
 
+      // GrimPool only supports ETH deposits
+      const isETH = tokenAddress === '0x0000000000000000000000000000000000000000'
+      if (!isETH) {
+        setError('GrimPool only supports ETH deposits')
+        return null
+      }
+
       try {
         setState('generating')
         setError(null)
@@ -99,28 +107,15 @@ export function useGrimPool() {
         setCurrentNote(note)
         const commitment = formatCommitmentForContract(note.commitment)
 
-        // 2. Check allowance
-        setState('approving')
-        const allowance = await checkAllowance(tokenAddress, amount)
-
-        if (allowance < amount) {
-          toast.info('Approval Required', 'Approving token spending...')
-
-          const approvalHash = await approveToken(tokenAddress, amount)
-
-          if (approvalHash) {
-            await publicClient.waitForTransactionReceipt({ hash: approvalHash })
-          }
-        }
-
-        // 3. Deposit to GrimPool
+        // 2. Deposit to GrimPool (ETH is sent as value)
         setState('depositing')
-        toast.info('Depositing', 'Submitting deposit to GrimPool...')
+        toast.info('Depositing', 'Submitting ETH deposit to GrimPool...')
 
         const hash = await walletClient.writeContract({
           ...grimPoolConfig,
           functionName: 'deposit',
-          args: [tokenAddress, commitment],
+          args: [commitment],
+          value: amount, // Send ETH as value
         })
 
         // 4. Wait for confirmation
@@ -175,7 +170,7 @@ export function useGrimPool() {
     try {
       const count = await publicClient.readContract({
         ...grimPoolConfig,
-        functionName: 'nextIndex',
+        functionName: 'getDepositCount',
         args: [],
       })
 

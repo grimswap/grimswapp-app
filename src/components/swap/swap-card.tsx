@@ -261,6 +261,7 @@ export function SwapCard() {
       }
 
       // Generate ZK proof
+      const expectedOutput = parseUnits(toAmount || '0', toToken.decimals)
       const proofResult = await generateProof(
         noteForProof,
         merkleProof,
@@ -268,9 +269,7 @@ export function SwapCard() {
           recipient: stealthAddress as `0x${string}`,
           relayer: relayerInfo.address as `0x${string}`,
           relayerFee: relayerInfo.feeBps,
-          amountIn: BigInt(suitableNote.amount),
-          minAmountOut: inputAmount,
-          poolKey: BigInt(0), // Not used in current circuit
+          swapAmountOut: expectedOutput, // Expected output from swap
         }
       )
 

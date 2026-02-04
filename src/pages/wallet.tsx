@@ -3,14 +3,14 @@ import { gsap } from 'gsap'
 import { useAccount } from 'wagmi'
 import { parseUnits, formatUnits } from 'viem'
 import { useDepositNotes, useGrimPool } from '@/hooks'
-import { useNativeBalance, useTokenBalance } from '@/hooks/use-token-balance'
+import { useNativeBalance } from '@/hooks/use-token-balance'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
 import { AddressDisplay } from '@/components/ui/copy-button'
 import { cn } from '@/lib/utils'
-import { ETH, USDC, formatTokenAmount, type Token } from '@/lib/tokens'
+import { ETH, formatTokenAmount } from '@/lib/tokens'
 import {
   Wallet,
   Shield,
@@ -32,7 +32,6 @@ import {
   CheckCircle,
   XCircle,
   RefreshCw,
-  ChevronDown,
 } from 'lucide-react'
 import type { StoredDepositNote } from '@/lib/storage/deposit-notes'
 
@@ -65,7 +64,6 @@ export function WalletPage() {
 
   // Balances
   const { formatted: ethBalance } = useNativeBalance()
-  const { formatted: usdcBalance } = useTokenBalance(USDC.address)
 
   // UI State
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
@@ -76,9 +74,7 @@ export function WalletPage() {
   const [poolDepositCount, setPoolDepositCount] = useState(0)
 
   // Deposit modal state
-  const [selectedToken, setSelectedToken] = useState<Token>(USDC)
   const [depositAmount, setDepositAmount] = useState('')
-  const [showTokenDropdown, setShowTokenDropdown] = useState(false)
 
   // Copy state
   const [copiedId, setCopiedId] = useState<number | null>(null)
@@ -113,12 +109,12 @@ export function WalletPage() {
     return sum + amount
   }, 0)
 
-  // Handle deposit
+  // Handle deposit (ETH only)
   const handleDeposit = async () => {
     if (!depositAmount || parseFloat(depositAmount) <= 0) return
 
-    const amount = parseUnits(depositAmount, selectedToken.decimals)
-    const result = await deposit(selectedToken.address, selectedToken.symbol, amount)
+    const amount = parseUnits(depositAmount, ETH.decimals)
+    const result = await deposit(ETH.address, ETH.symbol, amount)
 
     if (result) {
       setIsDepositModalOpen(false)
@@ -176,13 +172,6 @@ export function WalletPage() {
     await navigator.clipboard.writeText(secretData)
     setCopiedId(note.id!)
     setTimeout(() => setCopiedId(null), 2000)
-  }
-
-  // Get balance for token
-  const getTokenBalance = (token: Token): string => {
-    if (token.symbol === 'ETH') return ethBalance
-    if (token.symbol === 'USDC') return usdcBalance
-    return '0'
   }
 
   // Format date
@@ -617,80 +606,21 @@ export function WalletPage() {
         title="Deposit to Privacy Pool"
       >
         <div className="p-4 space-y-4">
-          {/* Token Selector */}
-          <div>
-            <label className="block text-sm text-mist-gray mb-2">Token</label>
-            <div className="relative">
-              <button
-                onClick={() => setShowTokenDropdown(!showTokenDropdown)}
-                className={cn(
-                  'w-full flex items-center justify-between p-3 rounded-xl',
-                  'bg-obsidian border border-arcane-purple/20',
-                  'hover:border-arcane-purple/40 transition-colors'
-                )}
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{
-                      background: `linear-gradient(135deg, ${selectedToken.color}40, ${selectedToken.color})`,
-                    }}
-                  >
-                    <span className="text-xs font-bold text-ghost-white">
-                      {selectedToken.symbol.slice(0, 2)}
-                    </span>
-                  </div>
-                  <div className="text-left">
-                    <p className="text-ghost-white font-medium">{selectedToken.symbol}</p>
-                    <p className="text-xs text-mist-gray">
-                      Balance: {getTokenBalance(selectedToken)}
-                    </p>
-                  </div>
-                </div>
-                <ChevronDown
-                  className={cn(
-                    'w-5 h-5 text-mist-gray transition-transform',
-                    showTokenDropdown && 'rotate-180'
-                  )}
-                />
-              </button>
-
-              {showTokenDropdown && (
-                <div className="absolute top-full left-0 right-0 mt-2 p-2 rounded-xl bg-charcoal border border-arcane-purple/30 z-10">
-                  {[ETH, USDC].map((token) => (
-                    <button
-                      key={token.symbol}
-                      onClick={() => {
-                        setSelectedToken(token)
-                        setShowTokenDropdown(false)
-                      }}
-                      className={cn(
-                        'w-full flex items-center gap-3 p-2 rounded-lg',
-                        'hover:bg-white/5 transition-colors',
-                        selectedToken.symbol === token.symbol && 'bg-arcane-purple/10'
-                      )}
-                    >
-                      <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center"
-                        style={{
-                          background: `linear-gradient(135deg, ${token.color}40, ${token.color})`,
-                        }}
-                      >
-                        <span className="text-xs font-bold text-ghost-white">
-                          {token.symbol.slice(0, 2)}
-                        </span>
-                      </div>
-                      <div className="text-left flex-1">
-                        <p className="text-ghost-white">{token.symbol}</p>
-                        <p className="text-xs text-mist-gray">{token.name}</p>
-                      </div>
-                      <span className="text-sm text-mist-gray font-mono">
-                        {getTokenBalance(token)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
+          {/* ETH Only Notice */}
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-obsidian border border-arcane-purple/20">
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center"
+              style={{
+                background: `linear-gradient(135deg, ${ETH.color}40, ${ETH.color})`,
+              }}
+            >
+              <span className="text-sm font-bold text-ghost-white">Ξ</span>
+            </div>
+            <div className="flex-1">
+              <p className="text-ghost-white font-medium">ETH</p>
+              <p className="text-xs text-mist-gray">
+                Balance: {ethBalance} ETH
+              </p>
             </div>
           </div>
 
@@ -706,7 +636,7 @@ export function WalletPage() {
                 className="pr-20"
               />
               <button
-                onClick={() => setDepositAmount(getTokenBalance(selectedToken))}
+                onClick={() => setDepositAmount(ethBalance)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-arcane-purple hover:text-arcane-purple/80"
               >
                 MAX
