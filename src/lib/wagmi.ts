@@ -1,7 +1,6 @@
-import { http, createConfig } from 'wagmi'
-import { mainnet, sepolia } from 'wagmi/chains'
-import { injected, walletConnect, coinbaseWallet } from 'wagmi/connectors'
+import { http } from 'wagmi'
 import { type Chain } from 'viem'
+import { getDefaultConfig } from '@rainbow-me/rainbowkit'
 
 // Custom Unichain Sepolia chain definition
 export const unichainSepolia: Chain = {
@@ -24,31 +23,18 @@ export const unichainSepolia: Chain = {
   testnet: true,
 }
 
-// WalletConnect project ID (replace with your own)
-const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID'
+// WalletConnect project ID - get one at https://cloud.walletconnect.com
+const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '3a8170812b534d0ff9d794f19a901d64'
 
-export const wagmiConfig = createConfig({
-  chains: [unichainSepolia, mainnet, sepolia],
-  connectors: [
-    injected(),
-    walletConnect({
-      projectId: walletConnectProjectId,
-      metadata: {
-        name: 'GrimSwap',
-        description: 'The Dark Arts of DeFi',
-        url: 'https://grimswap.xyz',
-        icons: ['https://grimswap.xyz/grimoire.svg'],
-      },
-    }),
-    coinbaseWallet({
-      appName: 'GrimSwap',
-    }),
-  ],
+// Use RainbowKit's getDefaultConfig which properly sets up wagmi + wallet connectors
+export const wagmiConfig = getDefaultConfig({
+  appName: 'GrimSwap',
+  projectId: WALLETCONNECT_PROJECT_ID,
+  chains: [unichainSepolia],
   transports: {
     [unichainSepolia.id]: http('https://sepolia.unichain.org'),
-    [mainnet.id]: http(),
-    [sepolia.id]: http(),
   },
+  ssr: false,
 })
 
 declare module 'wagmi' {
