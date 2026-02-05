@@ -40,19 +40,6 @@ export function PoolStatistics() {
     return num.toFixed(decimals)
   }
 
-  // Format liquidity
-  const formatLiquidity = (liq: bigint): string => {
-    const num = Number(liq)
-    if (num === 0) return '0'
-    if (num >= 1e18) return `${(num / 1e18).toFixed(2)}E`
-    if (num >= 1e15) return `${(num / 1e15).toFixed(2)}P`
-    if (num >= 1e12) return `${(num / 1e12).toFixed(2)}T`
-    if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`
-    if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`
-    if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`
-    return num.toFixed(0)
-  }
-
   if (isLoading) {
     return (
       <Card glow="purple" className="w-[420px]">
@@ -192,9 +179,9 @@ export function PoolStatistics() {
             <div className="flex items-center gap-2">
               <Droplets className="w-4 h-4 text-ethereal-cyan" />
               <div>
-                <p className="text-xs text-mist-gray">Total Liquidity</p>
-                <p className="text-sm font-mono text-ghost-white">
-                  {isInitialized ? formatLiquidity(poolState?.liquidity ?? 0n) : '—'}
+                <p className="text-xs text-mist-gray">Total Value Locked</p>
+                <p className="text-sm font-mono text-ethereal-cyan">
+                  {isInitialized ? `$${formatNumber(totalValue)}` : '—'}
                 </p>
               </div>
             </div>

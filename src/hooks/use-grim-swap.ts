@@ -209,8 +209,7 @@ export function useGrimSwap() {
             true, // zeroForOne (assuming Token A -> Token B)
             -BigInt(depositNote.amount), // exact input (negative for exact in)
             MIN_SQRT_PRICE, // sqrtPriceLimitX96
-            hookData,
-            address,
+            hookData, // hookData contains recipient info for ZK swap
           ],
         })
 

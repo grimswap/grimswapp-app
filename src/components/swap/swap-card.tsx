@@ -261,7 +261,7 @@ export function SwapCard() {
         amount: BigInt(suitableNote.amount),
         commitment: BigInt(suitableNote.commitment),
         nullifierHash: BigInt(suitableNote.nullifierHash),
-        leafIndex: merkleProof.leafIndex,
+        leafIndex: suitableNote.leafIndex!, // Use note's leafIndex, not proof's
       }
 
       // Calculate expected USDC output: convert ETH wei to ETH, multiply by price, apply slippage, convert to USDC smallest units
@@ -287,13 +287,14 @@ export function SwapCard() {
         throw new Error('Failed to generate ZK proof')
       }
 
-      // Step 2: Register Merkle root (if needed)
-      setSwapStep('Registering Merkle root...')
+      // Step 2: Verify Merkle root is known on-chain
+      setSwapStep('Verifying Merkle root...')
       const { grimPoolConfig } = await import('@/lib/contracts')
       const rootBytes32 = `0x${merkleProof.root.toString(16).padStart(64, '0')}` as `0x${string}`
 
-      if (publicClient && walletClient) {
+      if (publicClient) {
         try {
+          // Check if the root is known
           const isKnown = await publicClient.readContract({
             ...grimPoolConfig,
             functionName: 'isKnownRoot',
@@ -301,15 +302,20 @@ export function SwapCard() {
           })
 
           if (!isKnown) {
-            const addRootTx = await walletClient.writeContract({
+            // Get the current on-chain root for comparison
+            const onChainRoot = await publicClient.readContract({
               ...grimPoolConfig,
-              functionName: 'addKnownRoot',
-              args: [rootBytes32],
+              functionName: 'getLastRoot',
+              args: [],
             })
-            await publicClient.waitForTransactionReceipt({ hash: addRootTx })
+            console.warn('Merkle root mismatch:', {
+              computed: rootBytes32,
+              onChain: onChainRoot,
+            })
+            // The relayer may still accept if it can verify against a historical root
           }
         } catch (err) {
-          console.warn('Could not add Merkle root:', err)
+          console.warn('Could not verify Merkle root:', err)
         }
       }
 
@@ -319,9 +325,10 @@ export function SwapCard() {
 
       const sqrtPriceLimitX96 = zeroForOne ? MIN_SQRT_PRICE : MAX_SQRT_PRICE
 
+      const formattedProof = formatProofForRelayer(proofResult.proof, proofResult.publicSignals)
       const relayResponse = await submitToRelayer({
-        proof: formatProofForRelayer(proofResult.proof),
-        publicSignals: proofResult.publicSignals,
+        proof: formattedProof.proof,
+        publicSignals: formattedProof.publicSignals,
         swapParams: createSwapParams(
           DEFAULT_POOL_KEY,
           zeroForOne,
@@ -341,7 +348,7 @@ export function SwapCard() {
 
       // Save stealth address link
       if (relayResponse.txHash) {
-        await updateSwapTxHash(stealthAddress, relayResponse.txHash, relayResponse.fundingTxHash)
+        await updateSwapTxHash(stealthAddress, relayResponse.txHash)
       }
 
       // Mark note as spent

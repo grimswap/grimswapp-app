@@ -47,9 +47,10 @@ export function useDepositNotes() {
     async (
       note: DepositNote,
       tokenAddress: string,
-      tokenSymbol: string
+      tokenSymbol: string,
+      depositTxHash?: string
     ): Promise<number> => {
-      const id = await saveDepositNote(note, tokenAddress, tokenSymbol)
+      const id = await saveDepositNote(note, tokenAddress, tokenSymbol, depositTxHash)
       await loadNotes()
       return id
     },

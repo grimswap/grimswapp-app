@@ -124,19 +124,6 @@ function PoolStatsModal({ isOpen, onClose, pool }: PoolStatsModalProps) {
     return num.toFixed(decimals)
   }
 
-  // Format liquidity for display
-  const formatLiquidity = (liq: bigint): string => {
-    const num = Number(liq)
-    if (num === 0) return '0'
-    if (num >= 1e18) return `${(num / 1e18).toFixed(2)}E`
-    if (num >= 1e15) return `${(num / 1e15).toFixed(2)}P`
-    if (num >= 1e12) return `${(num / 1e12).toFixed(2)}T`
-    if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`
-    if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`
-    if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`
-    return num.toFixed(0)
-  }
-
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Pool Statistics">
       <div className="p-4 space-y-6">
@@ -309,15 +296,15 @@ function PoolStatsModal({ isOpen, onClose, pool }: PoolStatsModalProps) {
           </div>
         </div>
 
-        {/* Total Liquidity */}
+        {/* Total Value Locked */}
         <div className="p-4 rounded-xl bg-gradient-to-r from-charcoal/80 to-charcoal/50 border border-arcane-purple/20">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs text-mist-gray mb-1">Total Liquidity Units</p>
-              <p className="text-xl font-mono text-ghost-white">
-                {formatLiquidity(liquidity)}
+              <p className="text-xs text-mist-gray mb-1">Total Value Locked</p>
+              <p className="text-xl font-mono text-ethereal-cyan">
+                ${formatNumber(totalValue)}
               </p>
-              <p className="text-xs text-mist-gray mt-1">Uniswap v4 liquidity</p>
+              <p className="text-xs text-mist-gray mt-1">Combined pool reserves</p>
             </div>
             <div className="text-right">
               <p className="text-xs text-mist-gray mb-1">Pool Tick</p>
@@ -351,23 +338,41 @@ function PoolStatsModal({ isOpen, onClose, pool }: PoolStatsModalProps) {
 function PoolRow({ pool, onAddLiquidity, onViewStats }: { pool: PoolInfo; onAddLiquidity: (pool: PoolInfo) => void; onViewStats: (pool: PoolInfo) => void }) {
   const { poolState, isLoading, currentPrice, isInitialized } = useStateView(pool.poolKey)
 
-  // Format liquidity for display
-  // Uniswap v4 liquidity is a raw number, not in 18 decimals
-  const formatLiquidity = (liq: bigint): string => {
-    const num = Number(liq)
-    if (num === 0) return '0'
-    if (num >= 1e18) return `${(num / 1e18).toFixed(2)}E`
-    if (num >= 1e15) return `${(num / 1e15).toFixed(2)}P`
-    if (num >= 1e12) return `${(num / 1e12).toFixed(2)}T`
+  // Calculate TVL from pool state
+  const calculateTVL = () => {
+    if (!poolState || poolState.liquidity === 0n || !currentPrice) {
+      return 0
+    }
+    const sqrtPriceX96 = poolState.slot0?.sqrtPriceX96 ?? 0n
+    if (sqrtPriceX96 === 0n) return 0
+
+    const liqNum = Number(poolState.liquidity)
+    const priceInUsdc = currentPrice
+    if (priceInUsdc <= 0) return 0
+
+    const rawPrice = priceInUsdc / 1e12
+    const sqrtRawPrice = Math.sqrt(rawPrice)
+
+    const ethReserveWei = liqNum / sqrtRawPrice
+    const usdcReserveUnits = liqNum * sqrtRawPrice
+
+    const ethReserve = ethReserveWei / 1e18
+    const usdcReserve = usdcReserveUnits / 1e6
+
+    const ethValue = ethReserve * priceInUsdc
+    return ethValue + usdcReserve
+  }
+
+  // Format numbers for display
+  const formatNumber = (num: number): string => {
     if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`
     if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`
     if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`
-    return num.toFixed(0)
+    return num.toFixed(2)
   }
 
-  const tvl = poolState?.liquidity
-    ? formatLiquidity(poolState.liquidity)
-    : '—'
+  const totalValue = calculateTVL()
+  const tvl = totalValue > 0 ? `$${formatNumber(totalValue)}` : '—'
 
   const priceDisplay = currentPrice
     ? `$${currentPrice.toFixed(2)}`
@@ -406,9 +411,9 @@ function PoolRow({ pool, onAddLiquidity, onViewStats }: { pool: PoolInfo; onAddL
             </div>
           </div>
 
-          {/* TVL / Liquidity */}
+          {/* TVL */}
           <div>
-            <span className="sm:hidden text-xs text-mist-gray block">Liquidity</span>
+            <span className="sm:hidden text-xs text-mist-gray block">TVL</span>
             {isLoading ? (
               <Loader2 className="w-4 h-4 animate-spin text-mist-gray" />
             ) : (

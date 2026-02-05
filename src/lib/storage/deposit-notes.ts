@@ -19,6 +19,7 @@ export interface StoredDepositNote extends DepositNote {
   spent: boolean
   tokenAddress: string
   tokenSymbol: string
+  depositTxHash?: string // Transaction hash of deposit
 }
 
 /**
@@ -27,7 +28,8 @@ export interface StoredDepositNote extends DepositNote {
 export async function saveDepositNote(
   note: DepositNote,
   tokenAddress: string,
-  tokenSymbol: string
+  tokenSymbol: string,
+  depositTxHash?: string
 ): Promise<number> {
   const db = await openDB()
 
@@ -37,6 +39,7 @@ export async function saveDepositNote(
     spent: false,
     tokenAddress,
     tokenSymbol,
+    depositTxHash,
   }
 
   return new Promise((resolve, reject) => {

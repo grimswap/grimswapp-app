@@ -11,6 +11,9 @@ import {
 
 export type SyncState = 'idle' | 'syncing' | 'synced' | 'error'
 
+// Type for MerkleTree instance
+type MerkleTreeInstance = InstanceType<typeof MerkleTree>
+
 /**
  * Hook for managing and syncing Merkle tree
  */
@@ -18,7 +21,7 @@ export function useMerkleTree() {
   const publicClient = usePublicClient()
   const chainId = useChainId()
 
-  const [tree, setTree] = useState<MerkleTree | null>(null)
+  const [tree, setTree] = useState<MerkleTreeInstance | null>(null)
   const [state, setState] = useState<SyncState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [lastSyncedBlock, setLastSyncedBlock] = useState<number>(0)
@@ -29,7 +32,7 @@ export function useMerkleTree() {
   /**
    * Load tree from IndexedDB
    */
-  const loadTree = useCallback(async (): Promise<MerkleTree | null> => {
+  const loadTree = useCallback(async (): Promise<MerkleTreeInstance | null> => {
     try {
       const stored = await loadMerkleTreeState(treeId)
 
@@ -61,7 +64,7 @@ export function useMerkleTree() {
    * Save tree to IndexedDB
    */
   const saveTree = useCallback(
-    async (merkleTree: MerkleTree, lastBlock: number): Promise<void> => {
+    async (merkleTree: MerkleTreeInstance, lastBlock: number): Promise<void> => {
       try {
         const state = merkleTree.exportState()
         const root = await merkleTree.getRoot()
@@ -93,15 +96,15 @@ export function useMerkleTree() {
       if (!publicClient) return []
 
       try {
+        // Use the correct Deposit event schema from GrimPool
         const logs = await publicClient.getLogs({
           address: grimPoolConfig.address,
           event: {
             type: 'event',
             name: 'Deposit',
             inputs: [
-              { type: 'address', name: 'token', indexed: true },
-              { type: 'bytes32', name: 'commitment', indexed: false },
-              { type: 'uint256', name: 'leafIndex', indexed: false },
+              { type: 'bytes32', name: 'commitment', indexed: true },
+              { type: 'uint32', name: 'leafIndex', indexed: false },
               { type: 'uint256', name: 'timestamp', indexed: false },
             ],
           },
@@ -109,8 +112,15 @@ export function useMerkleTree() {
           toBlock,
         })
 
-        // Extract commitments from logs
-        const commitments = logs.map((log: any) => {
+        // Sort by leafIndex to ensure correct order
+        const sortedLogs = [...logs].sort((a: any, b: any) => {
+          const indexA = Number(a.args.leafIndex)
+          const indexB = Number(b.args.leafIndex)
+          return indexA - indexB
+        })
+
+        // Extract commitments from logs in correct order
+        const commitments = sortedLogs.map((log: any) => {
           return BigInt(log.args.commitment)
         })
 
@@ -158,6 +168,32 @@ export function useMerkleTree() {
       // Insert new commitments into tree
       for (const commitment of newCommitments) {
         await merkleTree.insert(commitment)
+      }
+
+      // Verify our tree root matches on-chain root
+      const computedRoot = merkleTree.getRoot()
+      try {
+        const onChainRoot = await publicClient.readContract({
+          ...grimPoolConfig,
+          functionName: 'getLastRoot',
+          args: [],
+        }) as `0x${string}`
+
+        const onChainRootBigInt = BigInt(onChainRoot)
+        const computedRootHex = `0x${computedRoot.toString(16).padStart(64, '0')}`
+
+        if (computedRoot !== onChainRootBigInt) {
+          console.warn('Merkle root mismatch!', {
+            computed: computedRootHex,
+            onChain: onChainRoot,
+            computedBigInt: computedRoot.toString(),
+            onChainBigInt: onChainRootBigInt.toString(),
+          })
+        } else {
+          console.log('Merkle tree synced successfully, root matches on-chain:', computedRootHex)
+        }
+      } catch (verifyErr) {
+        console.warn('Could not verify root against on-chain:', verifyErr)
       }
 
       // Save tree state

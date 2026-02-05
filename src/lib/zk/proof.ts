@@ -1,12 +1,13 @@
 /**
  * ZK proof generation using snarkjs
  * Uses Web Worker for non-blocking proof generation
+ *
+ * Core types from @grimswap/circuits SDK
  */
 
 import { groth16 } from 'snarkjs'
 import type { Address } from 'viem'
-import type { DepositNote } from './commitment'
-import type { MerkleProof } from './merkle'
+import type { DepositNote, MerkleProof } from '@grimswap/circuits'
 import { formatProofForCircuit } from './merkle'
 import type { WorkerResponse } from './proof.worker'
 
@@ -75,16 +76,15 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-/**
- * Groth16 proof in snarkjs format
- */
-export interface Groth16Proof {
-  pi_a: string[]
-  pi_b: string[][]
-  pi_c: string[]
-  protocol: string
-  curve: string
-}
+// Re-use SDK types for Groth16Proof and ContractProof
+import type {
+  Groth16Proof as SDKGroth16Proof,
+  ContractProof as SDKContractProof,
+} from '@grimswap/circuits'
+
+// Alias SDK types (snarkjs output format is compatible)
+export type Groth16Proof = SDKGroth16Proof
+export type ContractProof = SDKContractProof
 
 /**
  * Public signals for the circuit
@@ -96,16 +96,6 @@ export interface PublicSignals {
   relayer: Address
   relayerFee: bigint
   swapAmountOut: bigint
-}
-
-/**
- * Contract-formatted proof
- */
-export interface ContractProof {
-  a: [bigint, bigint]
-  b: [[bigint, bigint], [bigint, bigint]]
-  c: [bigint, bigint]
-  input: bigint[]
 }
 
 /**
@@ -154,14 +144,18 @@ async function generateProofInWorker(
     await yieldToUI()
 
     try {
-      const { proof, publicSignals } = await groth16.fullProve(
+      const result = await groth16.fullProve(
         circuitInputs,
         WASM_PATH,
         ZKEY_PATH
       )
 
       onProgress?.('Proof generated', 1.0)
-      return { proof, publicSignals }
+      // Cast to SDK Groth16Proof type (snarkjs returns compatible structure)
+      return {
+        proof: result.proof as unknown as Groth16Proof,
+        publicSignals: result.publicSignals as string[],
+      }
     } catch (error) {
       console.error('groth16.fullProve failed:', error)
       throw error
@@ -237,30 +231,29 @@ export async function generateProof(
 
 /**
  * Format proof for smart contract
+ * Returns SDK ContractProof format (pA, pB, pC, pubSignals)
  */
 export function formatProofForContract(
   proof: Groth16Proof,
   publicSignals: string[]
 ): ContractProof {
-  // Convert string arrays to bigints
-  const a: [bigint, bigint] = [
-    BigInt(proof.pi_a[0]),
-    BigInt(proof.pi_a[1]),
+  // Format as strings for SDK ContractProof type
+  const pA: [string, string] = [
+    proof.pi_a[0],
+    proof.pi_a[1],
   ]
 
-  const b: [[bigint, bigint], [bigint, bigint]] = [
-    [BigInt(proof.pi_b[0][1]), BigInt(proof.pi_b[0][0])], // Note: reversed for Solidity
-    [BigInt(proof.pi_b[1][1]), BigInt(proof.pi_b[1][0])],
+  const pB: [[string, string], [string, string]] = [
+    [proof.pi_b[0][1], proof.pi_b[0][0]], // Note: reversed for Solidity
+    [proof.pi_b[1][1], proof.pi_b[1][0]],
   ]
 
-  const c: [bigint, bigint] = [
-    BigInt(proof.pi_c[0]),
-    BigInt(proof.pi_c[1]),
+  const pC: [string, string] = [
+    proof.pi_c[0],
+    proof.pi_c[1],
   ]
 
-  const input = publicSignals.map(s => BigInt(s))
-
-  return { a, b, c, input }
+  return { pA, pB, pC, pubSignals: publicSignals }
 }
 
 /**

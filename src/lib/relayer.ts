@@ -1,5 +1,23 @@
+/**
+ * Relayer client - uses @grimswap/circuits SDK
+ */
+
+import {
+  submitToRelayer as sdkSubmitToRelayer,
+  getRelayerInfo as sdkGetRelayerInfo,
+  checkRelayerHealth as sdkCheckRelayerHealth,
+  formatProofForContract as sdkFormatProofForContract,
+  type RelayerResponse,
+  type ContractProof,
+  type Groth16Proof,
+  type PoolKey as SDKPoolKey,
+} from '@grimswap/circuits'
 import { RELAYER_URL } from './constants'
 import { type PoolKey } from './contracts'
+import { type Address } from 'viem'
+
+// Re-export types
+export type { RelayerResponse, ContractProof }
 
 /**
  * Relayer info response
@@ -37,32 +55,10 @@ export interface RelayRequest {
 }
 
 /**
- * Relay response
- */
-export interface RelayResponse {
-  success: boolean
-  txHash?: string
-  blockNumber?: string
-  gasUsed?: string
-  fundingTxHash?: string
-  recipientAddress?: string
-  usdcTransferred?: string
-  usdcTransferTxHash?: string
-  error?: string
-}
-
-/**
  * Check relayer health
  */
 export async function checkRelayerHealth(): Promise<boolean> {
-  try {
-    const response = await fetch(`${RELAYER_URL}/health`)
-    const data = await response.json()
-    return data.status === 'healthy'
-  } catch (error) {
-    console.error('Relayer health check failed:', error)
-    return false
-  }
+  return sdkCheckRelayerHealth(RELAYER_URL)
 }
 
 /**
@@ -70,11 +66,14 @@ export async function checkRelayerHealth(): Promise<boolean> {
  */
 export async function getRelayerInfo(): Promise<RelayerInfo | null> {
   try {
-    const response = await fetch(`${RELAYER_URL}/info`)
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+    const info = await sdkGetRelayerInfo(RELAYER_URL)
+    return {
+      address: info.address,
+      chain: 'Unichain Sepolia',
+      chainId: 1301,
+      feeBps: info.fee || 10,
+      balance: '0',
     }
-    return await response.json()
   } catch (error) {
     console.error('Failed to get relayer info:', error)
     return null
@@ -82,43 +81,38 @@ export async function getRelayerInfo(): Promise<RelayerInfo | null> {
 }
 
 /**
- * Submit a private swap through the relayer
+ * Submit a private swap through the relayer using SDK
  */
-export async function submitToRelayer(request: RelayRequest): Promise<RelayResponse> {
+export async function submitToRelayer(request: RelayRequest): Promise<RelayerResponse> {
   try {
-    console.log('Submitting to relayer:', {
-      url: `${RELAYER_URL}/relay`,
+    console.log('Submitting to relayer via SDK:', {
+      url: RELAYER_URL,
       publicSignals: request.publicSignals,
       swapParams: request.swapParams,
     })
 
-    const response = await fetch(`${RELAYER_URL}/relay`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    })
-
-    const data = await response.json()
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: data.error || data.message || `HTTP ${response.status}`,
-      }
+    // Convert pool key to SDK format with Address types
+    const sdkSwapParams = {
+      poolKey: {
+        currency0: request.swapParams.poolKey.currency0 as Address,
+        currency1: request.swapParams.poolKey.currency1 as Address,
+        fee: request.swapParams.poolKey.fee,
+        tickSpacing: request.swapParams.poolKey.tickSpacing,
+        hooks: request.swapParams.poolKey.hooks as Address,
+      } as SDKPoolKey,
+      zeroForOne: request.swapParams.zeroForOne,
+      amountSpecified: request.swapParams.amountSpecified,
+      sqrtPriceLimitX96: request.swapParams.sqrtPriceLimitX96,
     }
 
-    return {
-      success: true,
-      txHash: data.txHash,
-      blockNumber: data.blockNumber,
-      gasUsed: data.gasUsed,
-      fundingTxHash: data.fundingTxHash,
-      recipientAddress: data.recipientAddress,
-      usdcTransferred: data.usdcTransferred,
-      usdcTransferTxHash: data.usdcTransferTxHash,
-    }
+    const result = await sdkSubmitToRelayer(
+      RELAYER_URL,
+      request.proof,
+      request.publicSignals,
+      sdkSwapParams
+    )
+
+    return result
   } catch (error) {
     console.error('Relayer submission failed:', error)
     return {
@@ -131,18 +125,31 @@ export async function submitToRelayer(request: RelayRequest): Promise<RelayRespo
 /**
  * Format proof from snarkjs output to relayer format
  */
-export function formatProofForRelayer(proof: {
-  pi_a: string[]
-  pi_b: string[][]
-  pi_c: string[]
-}): RelayRequest['proof'] {
+export function formatProofForRelayer(
+  proof: {
+    pi_a: string[]
+    pi_b: string[][]
+    pi_c: string[]
+  },
+  publicSignals: string[]
+): { proof: RelayRequest['proof']; publicSignals: string[] } {
+  // Create a Groth16Proof compatible object for SDK
+  const groth16Proof: Groth16Proof = {
+    pi_a: proof.pi_a as [string, string, string],
+    pi_b: proof.pi_b as [[string, string], [string, string], [string, string]],
+    pi_c: proof.pi_c as [string, string, string],
+    protocol: 'groth16',
+    curve: 'bn128',
+  }
+
+  const formatted = sdkFormatProofForContract(groth16Proof, publicSignals)
   return {
-    a: [proof.pi_a[0], proof.pi_a[1]],
-    b: [
-      [proof.pi_b[0][0], proof.pi_b[0][1]],
-      [proof.pi_b[1][0], proof.pi_b[1][1]],
-    ],
-    c: [proof.pi_c[0], proof.pi_c[1]],
+    proof: {
+      a: formatted.pA as [string, string],
+      b: formatted.pB as [[string, string], [string, string]],
+      c: formatted.pC as [string, string],
+    },
+    publicSignals: formatted.pubSignals,
   }
 }
 

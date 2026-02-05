@@ -1,29 +1,37 @@
 import { type Address } from 'viem'
 import { CONTRACTS } from './constants'
+import {
+  GRIM_POOL_ABI,
+  GRIM_SWAP_ZK_ABI,
+  GROTH16_VERIFIER_ABI,
+  GRIM_SWAP_ROUTER_ABI,
+} from '@grimswap/circuits'
 
-// Import ABIs
-import GrimPoolABI from './GrimPool_ABI.json'
-import GrimSwapZKABI from './GrimSwapZk_ABI.json'
-import Groth16VerifierABI from './Groth16Verifier_ABI.json'
+// Import Uniswap v4 ABIs (keep local for now as SDK doesn't include these)
 import PoolManagerABI from './PoolManager_ABI.json'
 import StateViewABI from './StateView_ABI.json'
 import QuoterABI from './Quoter_ABI.json'
 import PoolModifyLiquidityTestABI from './PoolModifyLiquidityTest_ABI.json'
 
-// Contract configurations for wagmi
+// Contract configurations using SDK ABIs
 export const grimPoolConfig = {
   address: CONTRACTS.grimPool,
-  abi: GrimPoolABI,
+  abi: GRIM_POOL_ABI,
 } as const
 
 export const grimSwapZKConfig = {
   address: CONTRACTS.grimSwapZK,
-  abi: GrimSwapZKABI,
+  abi: GRIM_SWAP_ZK_ABI,
 } as const
 
 export const groth16VerifierConfig = {
   address: CONTRACTS.groth16Verifier,
-  abi: Groth16VerifierABI,
+  abi: GROTH16_VERIFIER_ABI,
+} as const
+
+export const grimSwapRouterConfig = {
+  address: CONTRACTS.grimSwapRouter,
+  abi: GRIM_SWAP_ROUTER_ABI,
 } as const
 
 export const poolManagerConfig = {
@@ -46,7 +54,59 @@ export const poolModifyLiquidityTestConfig = {
   abi: PoolModifyLiquidityTestABI,
 } as const
 
-// ERC-5564 Stealth Address ABIs (minimal for now)
+// Pool Helper ABI (minimal for initializePool and swap)
+export const poolHelperABI = [
+  {
+    inputs: [
+      {
+        name: 'key',
+        type: 'tuple',
+        components: [
+          { name: 'currency0', type: 'address' },
+          { name: 'currency1', type: 'address' },
+          { name: 'fee', type: 'uint24' },
+          { name: 'tickSpacing', type: 'int24' },
+          { name: 'hooks', type: 'address' },
+        ],
+      },
+      { name: 'sqrtPriceX96', type: 'uint160' },
+    ],
+    name: 'initializePool',
+    outputs: [{ name: 'tick', type: 'int24' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      {
+        name: 'key',
+        type: 'tuple',
+        components: [
+          { name: 'currency0', type: 'address' },
+          { name: 'currency1', type: 'address' },
+          { name: 'fee', type: 'uint24' },
+          { name: 'tickSpacing', type: 'int24' },
+          { name: 'hooks', type: 'address' },
+        ],
+      },
+      { name: 'zeroForOne', type: 'bool' },
+      { name: 'amountSpecified', type: 'int256' },
+      { name: 'sqrtPriceLimitX96', type: 'uint160' },
+      { name: 'hookData', type: 'bytes' },
+    ],
+    name: 'swap',
+    outputs: [{ name: 'delta', type: 'int256' }],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+] as const
+
+export const poolHelperConfig = {
+  address: CONTRACTS.poolHelper,
+  abi: poolHelperABI,
+} as const
+
+// ERC-5564 Stealth Address ABIs
 export const stealthRegistryABI = [
   {
     inputs: [
@@ -145,6 +205,16 @@ export const erc20ABI = [
     stateMutability: 'view',
     type: 'function',
   },
+  {
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    name: 'transfer',
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
 ] as const
 
 // Helper function to get ERC20 contract config
@@ -152,59 +222,6 @@ export const getERC20Config = (tokenAddress: Address) => ({
   address: tokenAddress,
   abi: erc20ABI,
 })
-
-// Pool Helper ABI (for executing swaps through Uniswap v4)
-export const poolHelperABI = [
-  {
-    type: 'function',
-    name: 'swap',
-    inputs: [
-      {
-        name: 'key',
-        type: 'tuple',
-        components: [
-          { name: 'currency0', type: 'address' },
-          { name: 'currency1', type: 'address' },
-          { name: 'fee', type: 'uint24' },
-          { name: 'tickSpacing', type: 'int24' },
-          { name: 'hooks', type: 'address' },
-        ],
-      },
-      { name: 'zeroForOne', type: 'bool' },
-      { name: 'amountSpecified', type: 'int256' },
-      { name: 'sqrtPriceLimitX96', type: 'uint160' },
-      { name: 'hookData', type: 'bytes' },
-      { name: 'from', type: 'address' },
-    ],
-    outputs: [{ name: 'delta', type: 'int256' }],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    name: 'initializePool',
-    inputs: [
-      {
-        name: 'key',
-        type: 'tuple',
-        components: [
-          { name: 'currency0', type: 'address' },
-          { name: 'currency1', type: 'address' },
-          { name: 'fee', type: 'uint24' },
-          { name: 'tickSpacing', type: 'int24' },
-          { name: 'hooks', type: 'address' },
-        ],
-      },
-      { name: 'sqrtPriceX96', type: 'uint160' },
-    ],
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-export const poolHelperConfig = {
-  address: CONTRACTS.poolHelper,
-  abi: poolHelperABI,
-} as const
 
 // Uniswap v4 Pool Key structure
 export interface PoolKey {
@@ -215,31 +232,23 @@ export interface PoolKey {
   hooks: Address
 }
 
-// Default pool key for GrimSwapZK (test tokens)
-export const GRIMSWAP_POOL_KEY: PoolKey = {
-  currency0: CONTRACTS.tokenA,
-  currency1: CONTRACTS.tokenB,
-  fee: 3000, // 0.3%
-  tickSpacing: 60,
-  hooks: CONTRACTS.grimSwapZK,
-}
-
-// ETH/USDC pool key (real Uniswap pool on Unichain Sepolia)
+// ETH/USDC pool key (vanilla Uniswap pool on Unichain Sepolia)
 // Native ETH (0x000...000) < USDC (0x31d...), so ETH is currency0
 export const ETH_USDC_POOL_KEY: PoolKey = {
   currency0: CONTRACTS.nativeEth, // ETH
   currency1: CONTRACTS.usdc,       // USDC
   fee: 3000,                       // 0.3% fee tier
   tickSpacing: 60,
-  hooks: '0x0000000000000000000000000000000000000000' as `0x${string}`, // No hooks (vanilla Uniswap)
+  hooks: '0x0000000000000000000000000000000000000000' as Address, // No hooks (vanilla Uniswap)
 }
 
 // ETH/USDC pool key with GrimSwapZK hook (privacy-enabled pool)
+// NOTE: Using fee=500, tickSpacing=10 which is compatible with the deployed hook
 export const ETH_USDC_GRIMSWAP_POOL_KEY: PoolKey = {
   currency0: CONTRACTS.nativeEth, // ETH
   currency1: CONTRACTS.usdc,       // USDC
-  fee: 3000,                       // 0.3% fee tier
-  tickSpacing: 60,
+  fee: 500,                        // 0.05% fee tier
+  tickSpacing: 10,
   hooks: CONTRACTS.grimSwapZK,     // GrimSwapZK hook for privacy
 }
 

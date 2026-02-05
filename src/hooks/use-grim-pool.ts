@@ -114,7 +114,7 @@ export function useGrimPool() {
         const hash = await walletClient.writeContract({
           ...grimPoolConfig,
           functionName: 'deposit',
-          args: [commitment],
+          args: [commitment as `0x${string}`],
           value: amount, // Send ETH as value
         })
 
@@ -138,9 +138,9 @@ export function useGrimPool() {
 
         // 6. Save deposit note with leaf index
         note.leafIndex = leafIndex
-        note.depositTxHash = hash
 
-        await saveNote(note, tokenAddress, tokenSymbol)
+        // Save note with tx hash as metadata
+        await saveNote(note, tokenAddress, tokenSymbol, hash)
 
         setState('success')
         toast.success('Deposit Successful', `Deposited to leaf index ${leafIndex}`)
@@ -194,6 +194,10 @@ export function useGrimPool() {
         args: [],
       })
 
+      // Convert bytes32 to bigint
+      if (typeof root === 'string') {
+        return BigInt(root)
+      }
       return root as bigint
     } catch (err) {
       console.error('Failed to get Merkle root:', err)
@@ -209,10 +213,13 @@ export function useGrimPool() {
       if (!publicClient) return false
 
       try {
+        // Format nullifier hash as bytes32
+        const nullifierHashHex = `0x${nullifierHash.toString(16).padStart(64, '0')}` as `0x${string}`
+
         const spent = await publicClient.readContract({
           ...grimPoolConfig,
-          functionName: 'nullifierHashes',
-          args: [nullifierHash],
+          functionName: 'isSpent',
+          args: [nullifierHashHex],
         })
 
         return spent as boolean
