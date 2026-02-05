@@ -39,8 +39,14 @@ export function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-12">
           {/* Brand */}
           <div className="md:col-span-1">
-            <Link to="/" className="inline-flex items-center gap-2 mb-4">
-              <span className="font-display text-2xl text-gradient-cyan">GrimSwap</span>
+            <Link to="/" className="inline-flex items-center gap-3 mb-4 group">
+              <img
+                src="/grimoire.svg"
+                alt="GrimSwap"
+                className="w-10 h-10 group-hover:scale-105 transition-transform"
+                style={{ filter: 'drop-shadow(0 0 10px rgba(0, 237, 218, 0.4))' }}
+              />
+              <span className="font-display text-2xl text-ghost-white">GrimSwap</span>
             </Link>
             <p className="text-mist-gray text-sm leading-relaxed max-w-xs">
               The Dark Arts of DeFi. Privacy-preserving token swaps powered by ZK-SNARK proofs
