@@ -29,7 +29,6 @@ import {
   Check,
   AlertTriangle,
   FileKey,
-  Coins,
   Clock,
   Lock,
   CheckCircle,
