@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { gsap } from 'gsap'
-import { Activity, Users, DollarSign, Globe } from 'lucide-react'
+import { Activity, Users, DollarSign, Globe, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useProtocolStats } from '@/hooks/use-protocol-stats'
 
@@ -15,17 +15,32 @@ interface StatCardProps {
 
 function StatCard({ icon: Icon, label, value, suffix = '', isLoading, delay = 0 }: StatCardProps) {
   const [displayValue, setDisplayValue] = useState<string | number>(0)
+  const [hasAnimated, setHasAnimated] = useState(false)
   const cardRef = useRef<HTMLDivElement>(null)
 
   // Animate number counting
   useEffect(() => {
-    if (isLoading || typeof value === 'string') {
+    // If loading, show skeleton
+    if (isLoading) {
+      return
+    }
+
+    // For string values (like "—" or formatted numbers), display directly
+    if (typeof value === 'string') {
       setDisplayValue(value)
+      setHasAnimated(true)
       return
     }
 
     const numValue = Number(value)
-    if (isNaN(numValue)) {
+    if (isNaN(numValue) || numValue === 0) {
+      setDisplayValue(value)
+      setHasAnimated(true)
+      return
+    }
+
+    // Only animate once
+    if (hasAnimated) {
       setDisplayValue(value)
       return
     }
@@ -43,6 +58,8 @@ function StatCard({ icon: Icon, label, value, suffix = '', isLoading, delay = 0 
 
       if (progress < 1) {
         requestAnimationFrame(animate)
+      } else {
+        setHasAnimated(true)
       }
     }
 
@@ -51,7 +68,7 @@ function StatCard({ icon: Icon, label, value, suffix = '', isLoading, delay = 0 
     }, delay * 1000)
 
     return () => clearTimeout(timer)
-  }, [value, isLoading, delay])
+  }, [value, isLoading, delay, hasAnimated])
 
   return (
     <div
@@ -106,7 +123,7 @@ function StatCard({ icon: Icon, label, value, suffix = '', isLoading, delay = 0 
 }
 
 export function StatsSection() {
-  const { stats, isLoading, error } = useProtocolStats()
+  const { stats, isLoading, error, refetch } = useProtocolStats()
   const sectionRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -127,29 +144,35 @@ export function StatsSection() {
     return () => ctx.revert()
   }, [])
 
+  // Format ETH price for display
+  const formatEthPrice = (price: number): string => {
+    if (!price || price === 0) return '—'
+    return `$${price.toFixed(2)}`
+  }
+
   const statItems = [
     {
       icon: Activity,
       label: 'Pool Liquidity',
-      value: stats?.poolLiquidity || '—',
+      value: stats.poolLiquidity,
       suffix: '',
     },
     {
       icon: Users,
       label: 'Privacy Deposits',
-      value: stats?.depositCount || 0,
+      value: stats.depositCount,
       suffix: '',
     },
     {
       icon: DollarSign,
       label: 'ETH Price',
-      value: stats?.ethPrice ? `$${stats.ethPrice.toFixed(2)}` : '—',
+      value: formatEthPrice(stats.ethPrice),
       suffix: '',
     },
     {
       icon: Globe,
       label: 'Network',
-      value: stats?.network || 'Unichain Sepolia',
+      value: stats.network,
       suffix: '',
     },
   ]
@@ -162,7 +185,9 @@ export function StatsSection() {
           <h2 className="font-display text-2xl sm:text-3xl text-ghost-white mb-3">
             Protocol Statistics
           </h2>
-          <p className="text-mist-gray text-sm">Live data from the GrimSwap protocol</p>
+          <p className="text-mist-gray text-sm">
+            {error ? 'Showing cached data' : 'Live data from the GrimSwap protocol'}
+          </p>
         </div>
 
         {/* Stats grid */}
@@ -180,11 +205,26 @@ export function StatsSection() {
           ))}
         </div>
 
-        {/* Error state */}
+        {/* Error state with retry button */}
         {error && (
-          <p className="text-center text-blood-crimson/80 text-sm mt-4">
-            Unable to fetch live data. Showing cached values.
-          </p>
+          <div className="flex items-center justify-center gap-3 mt-6">
+            <p className="text-mist-gray/60 text-sm">
+              Unable to fetch live data
+            </p>
+            <button
+              onClick={refetch}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm',
+                'bg-charcoal/50 border border-arcane-purple/20',
+                'text-mist-gray hover:text-ghost-white',
+                'hover:border-arcane-purple/40',
+                'transition-all duration-200'
+              )}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Retry
+            </button>
+          </div>
         )}
       </div>
     </section>
