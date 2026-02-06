@@ -5,7 +5,7 @@ import { parseUnits, formatUnits, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { useDepositNotes, useGrimPool, useStealthAddresses, useStateView, type StealthAddress } from '@/hooks'
 import { DEFAULT_POOL_KEY } from '@/lib/contracts'
-import { useNativeBalance } from '@/hooks/use-token-balance'
+import { useNativeBalance, useTokenBalance } from '@/hooks/use-token-balance'
 import { unichainSepolia } from '@/lib/wagmi'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -70,6 +70,7 @@ export function WalletPage() {
 
   // Balances
   const { formatted: ethBalance } = useNativeBalance()
+  const { formatted: usdcWalletBalance } = useTokenBalance(USDC.address)
 
   // Public client for balance checking
   const publicClient = usePublicClient()
@@ -96,6 +97,7 @@ export function WalletPage() {
 
   // Deposit modal state
   const [depositAmount, setDepositAmount] = useState('')
+  const [depositToken, setDepositToken] = useState<'ETH' | 'USDC'>('ETH')
 
   // Copy state
   const [copiedId, setCopiedId] = useState<number | null>(null)
@@ -139,16 +141,18 @@ export function WalletPage() {
     return sum + amount
   }, 0)
 
-  // Handle deposit (ETH only)
+  // Handle deposit (ETH or USDC)
   const handleDeposit = async () => {
     if (!depositAmount || parseFloat(depositAmount) <= 0) return
 
-    const amount = parseUnits(depositAmount, ETH.decimals)
-    const result = await deposit(ETH.address, ETH.symbol, amount)
+    const token = depositToken === 'ETH' ? ETH : USDC
+    const amount = parseUnits(depositAmount, token.decimals)
+    const result = await deposit(token.address, token.symbol, amount)
 
     if (result) {
       setIsDepositModalOpen(false)
       setDepositAmount('')
+      setDepositToken('ETH')
       refreshNotes()
     }
   }
@@ -252,7 +256,10 @@ export function WalletPage() {
     }
   }, [publicClient, unclaimedAddresses, updateBalances])
 
-  // Claim from stealth address (send USDC to destination)
+  // Claim token type state
+  const [claimTokenType, setClaimTokenType] = useState<'USDC' | 'ETH' | 'BOTH'>('USDC')
+
+  // Claim from stealth address (send tokens to destination)
   const handleClaim = useCallback(async () => {
     if (!selectedStealth || !claimDestination || !publicClient) return
 
@@ -268,7 +275,8 @@ export function WalletPage() {
         transport: http(),
       })
 
-      // Get USDC balance
+      // Get balances
+      const ethBalance = await publicClient.getBalance({ address: selectedStealth.address })
       const usdcBalance = await publicClient.readContract({
         address: USDC.address,
         abi: [
@@ -284,31 +292,49 @@ export function WalletPage() {
         args: [selectedStealth.address],
       }) as bigint
 
-      if (usdcBalance === 0n) {
-        throw new Error('No USDC balance to claim')
+      let txHash: `0x${string}` | null = null
+
+      // Transfer based on selected token type
+      if (claimTokenType === 'USDC' || claimTokenType === 'BOTH') {
+        if (usdcBalance > 0n) {
+          txHash = await stealthWallet.writeContract({
+            address: USDC.address,
+            abi: [
+              {
+                type: 'function',
+                name: 'transfer',
+                inputs: [
+                  { name: 'to', type: 'address' },
+                  { name: 'amount', type: 'uint256' },
+                ],
+                outputs: [{ name: '', type: 'bool' }],
+                stateMutability: 'nonpayable',
+              },
+            ],
+            functionName: 'transfer',
+            args: [claimDestination as `0x${string}`, usdcBalance],
+          })
+          await publicClient.waitForTransactionReceipt({ hash: txHash })
+        }
       }
 
-      // Transfer USDC to destination
-      const txHash = await stealthWallet.writeContract({
-        address: USDC.address,
-        abi: [
-          {
-            type: 'function',
-            name: 'transfer',
-            inputs: [
-              { name: 'to', type: 'address' },
-              { name: 'amount', type: 'uint256' },
-            ],
-            outputs: [{ name: '', type: 'bool' }],
-            stateMutability: 'nonpayable',
-          },
-        ],
-        functionName: 'transfer',
-        args: [claimDestination as `0x${string}`, usdcBalance],
-      })
+      if (claimTokenType === 'ETH' || claimTokenType === 'BOTH') {
+        // Reserve some ETH for gas if also claiming USDC
+        const gasReserve = claimTokenType === 'BOTH' ? parseUnits('0.0002', 18) : 0n
+        const ethToSend = ethBalance > gasReserve ? ethBalance - gasReserve : 0n
 
-      // Wait for confirmation
-      await publicClient.waitForTransactionReceipt({ hash: txHash })
+        if (ethToSend > 0n) {
+          txHash = await stealthWallet.sendTransaction({
+            to: claimDestination as `0x${string}`,
+            value: ethToSend,
+          })
+          await publicClient.waitForTransactionReceipt({ hash: txHash })
+        }
+      }
+
+      if (!txHash) {
+        throw new Error('No tokens to claim')
+      }
 
       // Mark as claimed
       await markAsClaimed(selectedStealth.address, txHash, claimDestination as `0x${string}`)
@@ -317,6 +343,7 @@ export function WalletPage() {
       setIsClaimModalOpen(false)
       setSelectedStealth(null)
       setClaimDestination('')
+      setClaimTokenType('USDC')
 
     } catch (error) {
       console.error('Claim failed:', error)
@@ -324,7 +351,7 @@ export function WalletPage() {
     } finally {
       setIsClaiming(false)
     }
-  }, [selectedStealth, claimDestination, publicClient, markAsClaimed])
+  }, [selectedStealth, claimDestination, publicClient, markAsClaimed, claimTokenType])
 
   // Open claim modal
   const openClaimModal = (stealth: StealthAddress) => {
@@ -983,20 +1010,55 @@ export function WalletPage() {
           setIsDepositModalOpen(false)
           resetDeposit()
           setDepositAmount('')
+          setDepositToken('ETH')
         }}
         title="Deposit to Privacy Pool"
       >
         <div className="p-4 space-y-4">
-          {/* ETH Only Notice */}
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-obsidian border border-arcane-purple/20">
-            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-charcoal overflow-hidden">
-              <img src={ETH.logoURI} alt="ETH" className="w-10 h-10 object-contain" />
-            </div>
-            <div className="flex-1">
-              <p className="text-ghost-white font-medium">ETH</p>
-              <p className="text-xs text-mist-gray">
-                Balance: {ethBalance} ETH
-              </p>
+          {/* Token Selection */}
+          <div>
+            <label className="block text-sm text-mist-gray mb-2">Select Token</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  setDepositToken('ETH')
+                  setDepositAmount('')
+                }}
+                className={cn(
+                  'flex items-center gap-3 p-3 rounded-xl border transition-all',
+                  depositToken === 'ETH'
+                    ? 'bg-arcane-purple/20 border-arcane-purple/50'
+                    : 'bg-obsidian border-arcane-purple/20 hover:border-arcane-purple/40'
+                )}
+              >
+                <div className="w-8 h-8 rounded-full flex items-center justify-center bg-charcoal overflow-hidden">
+                  <img src={ETH.logoURI} alt="ETH" className="w-8 h-8 object-contain" />
+                </div>
+                <div className="text-left">
+                  <p className="text-ghost-white font-medium text-sm">ETH</p>
+                  <p className="text-xs text-mist-gray">{parseFloat(ethBalance).toFixed(4)}</p>
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setDepositToken('USDC')
+                  setDepositAmount('')
+                }}
+                className={cn(
+                  'flex items-center gap-3 p-3 rounded-xl border transition-all',
+                  depositToken === 'USDC'
+                    ? 'bg-arcane-purple/20 border-arcane-purple/50'
+                    : 'bg-obsidian border-arcane-purple/20 hover:border-arcane-purple/40'
+                )}
+              >
+                <div className="w-8 h-8 rounded-full flex items-center justify-center bg-charcoal overflow-hidden">
+                  <img src={USDC.logoURI} alt="USDC" className="w-8 h-8 object-contain" />
+                </div>
+                <div className="text-left">
+                  <p className="text-ghost-white font-medium text-sm">USDC</p>
+                  <p className="text-xs text-mist-gray">{parseFloat(usdcWalletBalance).toFixed(2)}</p>
+                </div>
+              </button>
             </div>
           </div>
 
@@ -1012,7 +1074,7 @@ export function WalletPage() {
                 className="pr-20"
               />
               <button
-                onClick={() => setDepositAmount(ethBalance)}
+                onClick={() => setDepositAmount(depositToken === 'ETH' ? ethBalance : usdcWalletBalance)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ethereal-cyan hover:text-ethereal-cyan/80"
               >
                 MAX
@@ -1218,9 +1280,49 @@ export function WalletPage() {
                 </div>
               </div>
 
+              {/* Token Type Selection */}
+              <div>
+                <label className="block text-sm text-mist-gray mb-2">What to Claim</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setClaimTokenType('USDC')}
+                    className={cn(
+                      'p-2 rounded-lg border text-sm transition-all',
+                      claimTokenType === 'USDC'
+                        ? 'bg-spectral-green/20 border-spectral-green/50 text-spectral-green'
+                        : 'bg-obsidian border-arcane-purple/20 text-mist-gray hover:border-arcane-purple/40'
+                    )}
+                  >
+                    USDC Only
+                  </button>
+                  <button
+                    onClick={() => setClaimTokenType('ETH')}
+                    className={cn(
+                      'p-2 rounded-lg border text-sm transition-all',
+                      claimTokenType === 'ETH'
+                        ? 'bg-ethereal-cyan/20 border-ethereal-cyan/50 text-ethereal-cyan'
+                        : 'bg-obsidian border-arcane-purple/20 text-mist-gray hover:border-arcane-purple/40'
+                    )}
+                  >
+                    ETH Only
+                  </button>
+                  <button
+                    onClick={() => setClaimTokenType('BOTH')}
+                    className={cn(
+                      'p-2 rounded-lg border text-sm transition-all',
+                      claimTokenType === 'BOTH'
+                        ? 'bg-arcane-purple/20 border-arcane-purple/50 text-ghost-white'
+                        : 'bg-obsidian border-arcane-purple/20 text-mist-gray hover:border-arcane-purple/40'
+                    )}
+                  >
+                    Both
+                  </button>
+                </div>
+              </div>
+
               {/* Destination Address */}
               <div>
-                <label className="block text-sm text-mist-gray mb-2">Send USDC To</label>
+                <label className="block text-sm text-mist-gray mb-2">Send To</label>
                 <Input
                   type="text"
                   placeholder="0x..."
@@ -1228,7 +1330,7 @@ export function WalletPage() {
                   onChange={(e) => setClaimDestination(e.target.value)}
                 />
                 <p className="text-xs text-mist-gray mt-1">
-                  Enter the address where you want to receive your USDC
+                  Enter the address where you want to receive your tokens
                 </p>
               </div>
 
@@ -1267,7 +1369,7 @@ export function WalletPage() {
                 ) : (
                   <>
                     <Send className="w-4 h-4 mr-2" />
-                    Claim USDC
+                    Claim {claimTokenType === 'BOTH' ? 'All Tokens' : claimTokenType}
                   </>
                 )}
               </Button>
