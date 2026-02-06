@@ -61,3 +61,7 @@ export {
   generateStealthKeypair,
   type StealthAddress,
 } from './use-stealth-addresses'
+export {
+  useLiquidityPositions,
+  type LiquidityPosition,
+} from './use-liquidity-positions'

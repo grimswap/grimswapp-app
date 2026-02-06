@@ -104,28 +104,41 @@ export function useStealthAddresses() {
   }, [loadStealthAddresses])
 
   /**
-   * Create and save a new stealth address
+   * Generate a stealth keypair WITHOUT saving (for use before swap confirmation)
    */
-  const createStealthAddress = useCallback(async (): Promise<StealthAddress> => {
+  const generateStealthKeypairOnly = useCallback((): StealthAddress => {
     const { privateKey, address } = generateStealthKeypair()
 
-    const stealthAddress: StealthAddress = {
+    return {
       id: `stealth-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       privateKey,
       address,
       createdAt: Date.now(),
       claimed: false,
     }
+  }, [])
 
+  /**
+   * Save a stealth address (call after swap succeeds)
+   */
+  const saveStealthAddress = useCallback(async (stealthAddress: StealthAddress): Promise<void> => {
     const db = await getDB()
     await db.put(STORE_NAME, stealthAddress)
 
     // Update state
     setStealthAddresses(prev => [stealthAddress, ...prev])
 
-    console.log('Created stealth address:', address)
-    return stealthAddress
+    console.log('Saved stealth address:', stealthAddress.address)
   }, [])
+
+  /**
+   * Create and save a new stealth address (legacy - saves immediately)
+   */
+  const createStealthAddress = useCallback(async (): Promise<StealthAddress> => {
+    const stealthAddress = generateStealthKeypairOnly()
+    await saveStealthAddress(stealthAddress)
+    return stealthAddress
+  }, [generateStealthKeypairOnly, saveStealthAddress])
 
   /**
    * Update stealth address with swap transaction hash
@@ -250,6 +263,8 @@ export function useStealthAddresses() {
     claimedAddresses,
     isLoading,
     createStealthAddress,
+    generateStealthKeypairOnly,
+    saveStealthAddress,
     updateSwapTxHash,
     updateBalances,
     markAsClaimed,

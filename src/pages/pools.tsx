@@ -6,12 +6,15 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
+import { TransactionSuccessModal } from '@/components/ui/transaction-success-modal'
 import { Droplets, Plus, Shield, AlertCircle, ExternalLink, Loader2, TrendingUp, Activity, Coins, PieChart, BarChart3, RefreshCw } from 'lucide-react'
 import { CONTRACTS, ETH_USDC_POOL_KEY, ETH_USDC_GRIMSWAP_POOL_KEY, type PoolKey } from '@/lib/contracts'
 import { ETH, USDC } from '@/lib/tokens'
 import { useStateView } from '@/hooks/use-state-view'
 import { useLiquidity, FULL_RANGE_TICK_LOWER, FULL_RANGE_TICK_UPPER } from '@/hooks/use-liquidity'
 import { useNativeBalance, useTokenBalance } from '@/hooks/use-token-balance'
+import { useLiquidityPositions } from '@/hooks/use-liquidity-positions'
+import { calculatePoolId } from '@/hooks/use-pool-manager'
 
 interface PoolInfo {
   id: string
@@ -41,7 +44,7 @@ const POOLS: PoolInfo[] = [
     name: 'ETH/USDC',
     token0: 'ETH',
     token1: 'USDC',
-    fee: '0.3%',
+    fee: '0.05%',  // V3 pool uses fee=500 (0.05%)
     poolKey: ETH_USDC_GRIMSWAP_POOL_KEY,
     hasPrivacy: true,
     hookAddress: CONTRACTS.grimSwapZK,
@@ -417,7 +420,7 @@ function PoolRow({ pool, onAddLiquidity, onViewStats }: { pool: PoolInfo; onAddL
             {isLoading ? (
               <Loader2 className="w-4 h-4 animate-spin text-mist-gray" />
             ) : (
-              <span className="font-mono text-ghost-white">
+              <span className="font-mono text-ghost-white" title="Total Value Locked">
                 {isInitialized ? tvl : 'Not initialized'}
               </span>
             )}
@@ -481,18 +484,52 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
   const [usdcAmount, setUsdcAmount] = useState('')
   const [initPrice, setInitPrice] = useState('2500') // Default ETH price in USDC
   const [isWaitingConfirmation, setIsWaitingConfirmation] = useState(false)
+  const [activeTab, setActiveTab] = useState<'add' | 'remove'>('add')
+  const [removePercent, setRemovePercent] = useState(0)
+
+  // Success modal state
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [successDetails, setSuccessDetails] = useState<{
+    type: 'add-liquidity' | 'remove-liquidity'
+    txHash: string
+    ethAmount: string
+    usdcAmount: string
+  } | null>(null)
 
   const { formatted: ethBalance } = useNativeBalance()
   const { formatted: usdcBalance } = useTokenBalance(USDC.address)
 
+  // Calculate pool ID for position tracking
+  const poolId = pool ? calculatePoolId(pool.poolKey) : ''
+
+  // Get user's liquidity positions
+  const {
+    positions,
+    totalLiquidity,
+    addPosition,
+    updatePositionLiquidity,
+    removePosition,
+    calculateTokenAmounts,
+  } = useLiquidityPositions(poolId)
+
+  // Reset form when modal opens/closes
+  useEffect(() => {
+    if (isOpen) {
+      setEthAmount('')
+      setUsdcAmount('')
+      setRemovePercent(0)
+    }
+  }, [isOpen])
+
   const {
     initializePool,
     addLiquidity,
+    removeLiquidity,
     isInitializing,
     isApproving,
     isAddingLiquidity,
+    isRemovingLiquidity,
     error,
-    txHash,
     resetError,
   } = useLiquidity()
 
@@ -571,6 +608,8 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
         console.log('Auto-calculated USDC:', calculatedUsdc)
         setUsdcAmount(calculatedUsdc)
       }
+    } else if (!value) {
+      setUsdcAmount('')
     }
   }
 
@@ -582,6 +621,28 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
       const usdcNum = parseFloat(value)
       if (!isNaN(usdcNum) && priceToUse > 0) {
         setEthAmount((usdcNum / priceToUse).toFixed(6))
+      }
+    } else if (!value) {
+      setEthAmount('')
+    }
+  }
+
+  // Calculate expected USDC for current ETH amount
+  const priceToUse = currentPrice || vanillaPrice
+  const expectedUsdc = priceToUse && ethAmount ? parseFloat(ethAmount) * priceToUse : 0
+  const actualUsdc = parseFloat(usdcAmount) || 0
+
+  // Check if ratio is off by more than 1%
+  const ratioTolerance = 0.01 // 1% tolerance
+  const ratioMismatch = expectedUsdc > 0 && Math.abs(actualUsdc - expectedUsdc) / expectedUsdc > ratioTolerance
+  const ratioDeviation = expectedUsdc > 0 ? ((actualUsdc - expectedUsdc) / expectedUsdc * 100) : 0
+
+  // Fix ratio to match pool price
+  const handleFixRatio = () => {
+    if (priceToUse && ethAmount) {
+      const ethNum = parseFloat(ethAmount)
+      if (!isNaN(ethNum)) {
+        setUsdcAmount((ethNum * priceToUse).toFixed(2))
       }
     }
   }
@@ -609,6 +670,9 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
     const ethWei = parseEther(ethAmount)
     const usdcWei = parseUnits(usdcAmount, 6)
 
+    // Generate a unique salt for this position
+    const salt = `0x${Date.now().toString(16).padStart(64, '0')}` as `0x${string}`
+
     console.log('Attempting to add liquidity:', {
       pool: pool.id,
       hasPrivacy: pool.hasPrivacy,
@@ -616,6 +680,7 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
       usdcAmount: usdcWei.toString(),
       sqrtPriceX96: sqrtPriceX96.toString(),
       isInitialized,
+      salt,
     })
 
     const tx = await addLiquidity({
@@ -635,7 +700,21 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
         if (publicClient) {
           await publicClient.waitForTransactionReceipt({ hash: tx })
         }
-        // Success - clear form
+
+        // Save position to local storage
+        const liquidity = ethWei / BigInt(10 ** 6) // Same calculation as useLiquidity
+        addPosition(poolId, pool.poolKey, liquidity, salt, tx)
+
+        // Show success modal
+        setSuccessDetails({
+          type: 'add-liquidity',
+          txHash: tx,
+          ethAmount: ethAmount,
+          usdcAmount: usdcAmount,
+        })
+        setShowSuccessModal(true)
+
+        // Clear form
         setEthAmount('')
         setUsdcAmount('')
         // Refetch pool state after confirmation
@@ -650,13 +729,124 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
     }
   }
 
-  const isLoading = isInitializing || isApproving || isAddingLiquidity || isWaitingConfirmation
-  const canAdd = isConnected && ethAmount && usdcAmount && !isLoading && isInitialized
+  // Handle remove liquidity
+  const handleRemoveLiquidity = async () => {
+    if (!pool || !positions.length || removePercent === 0) return
+
+    resetError()
+
+    // Calculate amount to remove based on percentage
+    const amountToRemove = (totalLiquidity * BigInt(removePercent)) / 100n
+
+    if (amountToRemove === 0n) {
+      console.error('No liquidity to remove')
+      return
+    }
+
+    // Get the first position's salt (for single position simplicity)
+    const position = positions[0]
+
+    console.log('Removing liquidity:', {
+      pool: pool.id,
+      percent: removePercent,
+      amountToRemove: amountToRemove.toString(),
+      totalLiquidity: totalLiquidity.toString(),
+      salt: position.salt,
+    })
+
+    const tx = await removeLiquidity(
+      pool.poolKey,
+      amountToRemove,
+      position.tickLower,
+      position.tickUpper,
+      position.salt,
+      '0x'
+    )
+
+    if (tx) {
+      setIsWaitingConfirmation(true)
+      try {
+        if (publicClient) {
+          await publicClient.waitForTransactionReceipt({ hash: tx })
+        }
+
+        // Update or remove position based on percentage
+        if (removePercent === 100) {
+          removePosition(position.id)
+        } else {
+          const remainingLiquidity = totalLiquidity - amountToRemove
+          updatePositionLiquidity(position.id, remainingLiquidity)
+        }
+
+        // Show success modal
+        setSuccessDetails({
+          type: 'remove-liquidity',
+          txHash: tx,
+          ethAmount: removeEthAmount.toFixed(6),
+          usdcAmount: removeUsdcAmount.toFixed(2),
+        })
+        setShowSuccessModal(true)
+
+        // Reset form
+        setRemovePercent(0)
+        // Refetch pool state
+        refetch()
+        setTimeout(() => refetch(), 3000)
+      } catch (err) {
+        console.error('Error waiting for confirmation:', err)
+      } finally {
+        setIsWaitingConfirmation(false)
+      }
+    }
+  }
+
+  // Calculate user's position value
+  const userTokenAmounts = priceToUse
+    ? calculateTokenAmounts(totalLiquidity, priceToUse)
+    : { ethAmount: 0, usdcAmount: 0 }
+
+  // Calculate pool share (simplified - based on displayed liquidity)
+  const poolLiquidity = poolState?.liquidity ?? 0n
+  const poolShare = poolLiquidity > 0n && totalLiquidity > 0n
+    ? (Number(totalLiquidity) / Number(poolLiquidity)) * 100
+    : 0
+
+  // Calculate amounts to receive based on remove percentage
+  const removeEthAmount = (userTokenAmounts.ethAmount * removePercent) / 100
+  const removeUsdcAmount = (userTokenAmounts.usdcAmount * removePercent) / 100
+
+  const isLoading = isInitializing || isApproving || isAddingLiquidity || isRemovingLiquidity || isWaitingConfirmation
+  const canAdd = isConnected && ethAmount && usdcAmount && !isLoading && isInitialized && !ratioMismatch
+  const canRemove = isConnected && !isLoading && totalLiquidity > 0n && removePercent > 0
   const canInitialize = isConnected && !isLoading && !isInitialized && pool?.hasPrivacy
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Add Liquidity">
+    <Modal isOpen={isOpen} onClose={onClose} title="Manage Liquidity">
       <div className="p-4 space-y-4">
+        {/* Tabs */}
+        <div className="flex gap-2 p-1 rounded-lg bg-charcoal/50">
+          <button
+            onClick={() => setActiveTab('add')}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'add'
+                ? 'bg-arcane-purple text-ghost-white'
+                : 'text-mist-gray hover:text-ghost-white'
+            }`}
+          >
+            Add Liquidity
+          </button>
+          <button
+            onClick={() => setActiveTab('remove')}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'remove'
+                ? 'bg-arcane-purple text-ghost-white'
+                : 'text-mist-gray hover:text-ghost-white'
+            }`}
+          >
+            Remove Liquidity
+          </button>
+        </div>
+
         {/* Pool Info */}
         {pool && (
           <div className="p-3 rounded-lg bg-charcoal/50 border border-arcane-purple/20">
@@ -757,7 +947,25 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
           </div>
         )}
 
-        {/* ETH Input */}
+        {/* ADD LIQUIDITY TAB */}
+        {activeTab === 'add' && (
+          <>
+            {/* Required Ratio Info */}
+            {isInitialized && priceToUse && (
+              <div className="p-3 rounded-lg bg-arcane-purple/10 border border-arcane-purple/20">
+                <p className="text-xs text-mist-gray">
+                  <span className="text-ethereal-cyan font-medium">Required Ratio at Current Price</span>
+                </p>
+                <p className="text-sm text-ghost-white mt-1 font-mono">
+                  1 ETH = {priceToUse.toFixed(2)} USDC
+                </p>
+                <p className="text-xs text-mist-gray mt-1">
+                  Both tokens must be provided in this ratio to add liquidity efficiently.
+                </p>
+              </div>
+            )}
+
+            {/* ETH Input */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-sm text-mist-gray">ETH Amount</label>
@@ -820,6 +1028,46 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
           </div>
         </div>
 
+        {/* Ratio Mismatch Warning */}
+        {ratioMismatch && ethAmount && usdcAmount && (
+          <div className="p-3 rounded-lg bg-blood-crimson/10 border border-blood-crimson/30">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-blood-crimson flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-blood-crimson">Token Ratio Mismatch</p>
+                <p className="text-xs text-mist-gray mt-1">
+                  Your ratio is off by <span className="text-blood-crimson font-medium">{Math.abs(ratioDeviation).toFixed(1)}%</span> from the pool price.
+                  <br />
+                  Expected: <span className="text-ghost-white">{expectedUsdc.toFixed(2)} USDC</span> for {ethAmount} ETH
+                  <br />
+                  You entered: <span className="text-ghost-white">{actualUsdc.toFixed(2)} USDC</span>
+                </p>
+                <p className="text-xs text-blood-crimson mt-2">
+                  ⚠️ Adding liquidity with wrong ratio will result in lost value!
+                </p>
+                <button
+                  onClick={handleFixRatio}
+                  className="mt-2 text-xs px-3 py-1.5 rounded bg-ethereal-cyan/20 text-ethereal-cyan hover:bg-ethereal-cyan/30 transition-colors"
+                >
+                  Fix Ratio (Use {expectedUsdc.toFixed(2)} USDC)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Correct Ratio Indicator */}
+        {!ratioMismatch && ethAmount && usdcAmount && priceToUse && (
+          <div className="p-3 rounded-lg bg-spectral-green/10 border border-spectral-green/30">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-spectral-green" />
+              <p className="text-xs text-spectral-green">
+                Ratio matches pool price: 1 ETH = ${priceToUse.toFixed(2)} USDC
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Price range info */}
         <div className="p-3 rounded-lg bg-ethereal-cyan/5 border border-ethereal-cyan/20">
           <p className="text-xs text-mist-gray">
@@ -837,21 +1085,6 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
           </div>
         )}
 
-        {/* Success */}
-        {txHash && (
-          <div className="p-3 rounded-lg bg-spectral-green/10 border border-spectral-green/30">
-            <p className="text-xs text-spectral-green mb-2">Transaction submitted!</p>
-            <a
-              href={`https://unichain-sepolia.blockscout.com/tx/${txHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-ethereal-cyan hover:underline flex items-center gap-1"
-            >
-              View on Explorer <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        )}
-
         {/* Action Button */}
         {!isConnected ? (
           <Button variant="primary" className="w-full" disabled>
@@ -861,6 +1094,11 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
           <Button variant="secondary" className="w-full" disabled>
             <AlertCircle className="w-4 h-4 mr-2" />
             Initialize Pool First
+          </Button>
+        ) : ratioMismatch ? (
+          <Button variant="secondary" className="w-full" disabled>
+            <AlertCircle className="w-4 h-4 mr-2" />
+            Fix Token Ratio First
           </Button>
         ) : (
           <Button
@@ -893,11 +1131,195 @@ function AddLiquidityModal({ isOpen, onClose, pool }: AddLiquidityModalProps) {
           </Button>
         )}
 
-        {/* Disclaimer */}
-        <p className="text-xs text-mist-gray text-center">
-          You will receive LP tokens representing your share of the pool.
-        </p>
+            {/* Disclaimer */}
+            <p className="text-xs text-mist-gray text-center">
+              You will receive LP tokens representing your share of the pool.
+            </p>
+          </>
+        )}
+
+        {/* REMOVE LIQUIDITY TAB */}
+        {activeTab === 'remove' && (
+          <>
+            {/* Your Position */}
+            <div className="p-4 rounded-xl bg-charcoal/50 border border-arcane-purple/20 space-y-3">
+              <h3 className="text-sm font-medium text-ghost-white">Your Position</h3>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg bg-obsidian/50">
+                  <p className="text-xs text-mist-gray">LP Tokens</p>
+                  <p className="text-lg font-mono text-ghost-white">
+                    {totalLiquidity > 0n ? (Number(totalLiquidity) / 1e12).toFixed(4) : '0'}
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg bg-obsidian/50">
+                  <p className="text-xs text-mist-gray">Pool Share</p>
+                  <p className="text-lg font-mono text-ghost-white">
+                    {poolShare.toFixed(2)}%
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg bg-obsidian/50">
+                  <div className="flex items-center gap-2 mb-1">
+                    <img src={ETH.logoURI} alt="ETH" className="w-5 h-5" />
+                    <span className="text-xs text-mist-gray">ETH</span>
+                  </div>
+                  <p className="text-sm font-mono text-ghost-white">
+                    {userTokenAmounts.ethAmount.toFixed(6)}
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg bg-obsidian/50">
+                  <div className="flex items-center gap-2 mb-1">
+                    <img src={USDC.logoURI} alt="USDC" className="w-5 h-5" />
+                    <span className="text-xs text-mist-gray">USDC</span>
+                  </div>
+                  <p className="text-sm font-mono text-ghost-white">
+                    {userTokenAmounts.usdcAmount.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Remove Liquidity Slider */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-mist-gray">Remove Liquidity</span>
+                <span className="text-lg font-mono text-ethereal-cyan">{removePercent}%</span>
+              </div>
+
+              {/* Percentage Buttons */}
+              <div className="grid grid-cols-4 gap-2">
+                {[25, 50, 75, 100].map((percent) => (
+                  <button
+                    key={percent}
+                    onClick={() => setRemovePercent(percent)}
+                    className={`py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                      removePercent === percent
+                        ? 'bg-arcane-purple text-ghost-white'
+                        : 'bg-charcoal/50 text-mist-gray hover:bg-charcoal hover:text-ghost-white'
+                    }`}
+                  >
+                    {percent}%
+                  </button>
+                ))}
+              </div>
+
+              {/* Custom Slider */}
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={removePercent}
+                onChange={(e) => setRemovePercent(parseInt(e.target.value))}
+                className="w-full h-2 bg-charcoal rounded-lg appearance-none cursor-pointer accent-arcane-purple"
+              />
+            </div>
+
+            {/* You Will Receive */}
+            <div className="p-4 rounded-xl bg-arcane-purple/10 border border-arcane-purple/20 space-y-3">
+              <h3 className="text-sm font-medium text-ghost-white">You will receive:</h3>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <img src={ETH.logoURI} alt="ETH" className="w-6 h-6" />
+                  <span className="text-mist-gray">ETH</span>
+                </div>
+                <span className="text-lg font-mono text-ghost-white">
+                  {removeEthAmount.toFixed(6)}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <img src={USDC.logoURI} alt="USDC" className="w-6 h-6" />
+                  <span className="text-mist-gray">USDC</span>
+                </div>
+                <span className="text-lg font-mono text-ghost-white">
+                  {removeUsdcAmount.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* No Position Warning */}
+            {totalLiquidity === 0n && (
+              <div className="p-3 rounded-lg bg-charcoal/50 border border-arcane-purple/10">
+                <p className="text-sm text-mist-gray text-center">
+                  You don't have any liquidity positions to remove.
+                </p>
+              </div>
+            )}
+
+            {/* Error */}
+            {error && (
+              <div className="p-3 rounded-lg bg-blood-crimson/10 border border-blood-crimson/30 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-blood-crimson flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-blood-crimson">{error}</p>
+              </div>
+            )}
+
+            {/* Remove Button */}
+            {!isConnected ? (
+              <Button variant="primary" className="w-full" disabled>
+                Connect Wallet
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                className="w-full"
+                onClick={handleRemoveLiquidity}
+                disabled={!canRemove}
+              >
+                {isRemovingLiquidity ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Removing Liquidity...
+                  </>
+                ) : isWaitingConfirmation ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Waiting for Confirmation...
+                  </>
+                ) : totalLiquidity === 0n ? (
+                  'No Position to Remove'
+                ) : removePercent === 0 ? (
+                  'Select Amount to Remove'
+                ) : (
+                  <>
+                    <Droplets className="w-4 h-4 mr-2" />
+                    Remove {removePercent}% Liquidity
+                  </>
+                )}
+              </Button>
+            )}
+          </>
+        )}
+
       </div>
+
+      {/* Success Modal */}
+      {successDetails && (
+        <TransactionSuccessModal
+          isOpen={showSuccessModal}
+          onClose={() => {
+            setShowSuccessModal(false)
+            setSuccessDetails(null)
+          }}
+          details={{
+            type: successDetails.type,
+            txHash: successDetails.txHash,
+            fromToken: 'ETH',
+            toToken: 'USDC',
+            fromAmount: successDetails.ethAmount,
+            toAmount: successDetails.usdcAmount,
+            fromLogo: ETH.logoURI,
+            toLogo: USDC.logoURI,
+            poolName: pool?.hasPrivacy ? 'ETH/USDC GrimSwap' : 'ETH/USDC',
+          }}
+          explorerBaseUrl="https://unichain-sepolia.blockscout.com"
+        />
+      )}
     </Modal>
   )
 }
@@ -911,8 +1333,8 @@ export function PoolsPage() {
   const [isStatsModalOpen, setIsStatsModalOpen] = useState(false)
 
   // Fetch stats for both pools
-  const { poolState: vanillaState, isInitialized: vanillaInit } = useStateView(ETH_USDC_POOL_KEY)
-  const { poolState: grimState, isInitialized: grimInit } = useStateView(ETH_USDC_GRIMSWAP_POOL_KEY)
+  const { poolState: vanillaState, isInitialized: vanillaInit, currentPrice: vanillaPrice } = useStateView(ETH_USDC_POOL_KEY)
+  const { poolState: grimState, isInitialized: grimInit, currentPrice: grimPrice } = useStateView(ETH_USDC_GRIMSWAP_POOL_KEY)
 
   useEffect(() => {
     const ctx = gsap.context(() => {
@@ -948,22 +1370,44 @@ export function PoolsPage() {
     setStatsPool(null)
   }
 
-  // Calculate total liquidity across pools
-  const totalLiquidity = (vanillaState?.liquidity ?? 0n) + (grimState?.liquidity ?? 0n)
+  // Calculate TVL for a pool from liquidity and price
+  const calculatePoolTVL = (liquidity: bigint | undefined, price: number | null): number => {
+    if (!liquidity || liquidity === 0n || !price || price <= 0) return 0
+
+    const liqNum = Number(liquidity)
+    // Convert price to raw ratio (accounting for decimal difference)
+    // price is USDC per ETH (e.g., 4000)
+    const rawPrice = price / 1e12
+    const sqrtRawPrice = Math.sqrt(rawPrice)
+
+    // Virtual reserves
+    const ethReserveWei = liqNum / sqrtRawPrice
+    const usdcReserveUnits = liqNum * sqrtRawPrice
+
+    // Convert to human-readable
+    const ethReserve = ethReserveWei / 1e18
+    const usdcReserve = usdcReserveUnits / 1e6
+
+    // Calculate TVL in USD
+    const ethValue = ethReserve * price
+    return ethValue + usdcReserve
+  }
+
+  // Calculate TVL for each pool
+  const vanillaTVL = calculatePoolTVL(vanillaState?.liquidity, vanillaPrice)
+  const grimTVL = calculatePoolTVL(grimState?.liquidity, grimPrice)
+  const totalTVL = vanillaTVL + grimTVL
+
   const privacyPoolsCount = grimInit ? 1 : 0
   const activePoolsCount = (vanillaInit ? 1 : 0) + (grimInit ? 1 : 0)
 
-  // Format total liquidity for display (same as PoolRow)
-  const formatTotalLiquidity = (liq: bigint): string => {
-    const num = Number(liq)
-    if (num === 0) return '—'
-    if (num >= 1e18) return `${(num / 1e18).toFixed(2)}E`
-    if (num >= 1e15) return `${(num / 1e15).toFixed(2)}P`
-    if (num >= 1e12) return `${(num / 1e12).toFixed(2)}T`
-    if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`
-    if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`
-    if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`
-    return num.toFixed(0)
+  // Format TVL for display
+  const formatTVL = (tvl: number): string => {
+    if (tvl === 0) return '—'
+    if (tvl >= 1e9) return `$${(tvl / 1e9).toFixed(2)}B`
+    if (tvl >= 1e6) return `$${(tvl / 1e6).toFixed(2)}M`
+    if (tvl >= 1e3) return `$${(tvl / 1e3).toFixed(2)}K`
+    return `$${tvl.toFixed(2)}`
   }
 
   return (
@@ -1008,9 +1452,9 @@ export function PoolsPage() {
         <div className="pool-element grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Card glow="purple">
             <CardContent className="p-4 text-center">
-              <p className="text-sm text-mist-gray mb-1">Total Liquidity</p>
+              <p className="text-sm text-mist-gray mb-1">Total Value Locked</p>
               <p className="text-2xl font-mono text-ghost-white">
-                {formatTotalLiquidity(totalLiquidity)}
+                {formatTVL(totalTVL)}
               </p>
             </CardContent>
           </Card>
@@ -1035,7 +1479,7 @@ export function PoolsPage() {
           {/* Table Header */}
           <div className="hidden sm:grid grid-cols-6 gap-4 px-4 py-2 text-sm text-mist-gray">
             <div className="col-span-2">Pool</div>
-            <div>Liquidity</div>
+            <div>TVL</div>
             <div>Price</div>
             <div>Status</div>
             <div></div>

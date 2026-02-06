@@ -25,24 +25,26 @@ const GRIM_POOL_MULTI_TOKEN_ABI = [
     stateMutability: 'payable',
     type: 'function',
   },
-  // ERC20 deposit
+  // ERC20 deposit - NOTE: parameter order is (commitment, token, amount)
   {
     inputs: [
+      { name: 'commitment', type: 'bytes32' },
       { name: 'token', type: 'address' },
       { name: 'amount', type: 'uint256' },
-      { name: 'commitment', type: 'bytes32' },
     ],
     name: 'depositToken',
     outputs: [],
     stateMutability: 'nonpayable',
     type: 'function',
   },
-  // Events
+  // Events - matches contract: Deposit(bytes32 indexed commitment, uint32 leafIndex, address indexed token, uint256 amount, uint256 timestamp)
   {
     anonymous: false,
     inputs: [
       { indexed: true, name: 'commitment', type: 'bytes32' },
       { indexed: false, name: 'leafIndex', type: 'uint32' },
+      { indexed: true, name: 'token', type: 'address' },
+      { indexed: false, name: 'amount', type: 'uint256' },
       { indexed: false, name: 'timestamp', type: 'uint256' },
     ],
     name: 'Deposit',
@@ -213,44 +215,39 @@ export function useGrimPool() {
         setCurrentNote(note)
         const commitment = formatCommitmentForContract(note.commitment)
 
-        // 2. For ERC20, always request fresh approval to ensure correct spender
+        // 2. For ERC20, ALWAYS request fresh approval for exact amount
         if (!isETH) {
           const spenderAddress = CONTRACTS.grimPoolMultiToken
-          console.log('ERC20 deposit - requesting approval for GrimPoolMultiToken:', spenderAddress)
+          console.log('ERC20 deposit - spender:', spenderAddress)
 
-          // Check current allowance
-          const currentAllowance = await checkAllowance(tokenAddress, amount)
-          console.log('Current allowance:', currentAllowance.toString(), 'Required:', amount.toString())
+          // Always request approval for exact amount (ensures correct spender)
+          setState('approving')
+          toast.info('Approving', `Approving ${tokenSymbol} for deposit...`)
 
-          // Always request approval to ensure it's for the correct contract
-          // (User may have approved a different contract previously)
-          if (currentAllowance < amount) {
-            setState('approving')
-            toast.info('Approving', `Approving ${tokenSymbol} for deposit...`)
+          console.log('Requesting approval for amount:', amount.toString(), 'to spender:', spenderAddress)
+          const approveTxHash = await approveToken(tokenAddress, amount)
 
-            const approveTxHash = await approveToken(tokenAddress, amount)
-            if (!approveTxHash) {
-              throw new Error('Approval transaction was not submitted')
-            }
+          if (!approveTxHash) {
+            throw new Error('Approval transaction was not submitted')
+          }
 
-            toast.info('Confirming', 'Waiting for approval confirmation...')
-            const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash })
+          console.log('Approval tx submitted:', approveTxHash)
+          toast.info('Confirming', 'Waiting for approval confirmation...')
 
-            if (approvalReceipt.status === 'reverted') {
-              throw new Error('Approval transaction reverted')
-            }
+          const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash })
 
-            console.log('Approval confirmed:', approveTxHash)
+          if (approvalReceipt.status === 'reverted') {
+            throw new Error('Approval transaction reverted')
+          }
 
-            // Verify the allowance was actually set
-            const newAllowance = await checkAllowance(tokenAddress, amount)
-            console.log('New allowance after approval:', newAllowance.toString())
+          console.log('Approval confirmed!')
 
-            if (newAllowance < amount) {
-              throw new Error(`Approval failed: allowance is ${newAllowance.toString()} but need ${amount.toString()}`)
-            }
-          } else {
-            console.log('Already approved, skipping approval step. Allowance:', currentAllowance.toString())
+          // Verify the allowance was actually set
+          const newAllowance = await checkAllowance(tokenAddress, amount)
+          console.log('New allowance after approval:', newAllowance.toString())
+
+          if (newAllowance < amount) {
+            throw new Error(`Approval failed: allowance is ${newAllowance.toString()} but need ${amount.toString()}`)
           }
         }
 
@@ -281,12 +278,12 @@ export function useGrimPool() {
               value: amount,
             })
           } else {
-            // ERC20 deposit: depositToken(token, amount, commitment)
+            // ERC20 deposit: depositToken(commitment, token, amount)
             hash = await walletClient.writeContract({
               address: poolAddress,
               abi: GRIM_POOL_MULTI_TOKEN_ABI,
               functionName: 'depositToken',
-              args: [tokenAddress, amount, commitment as `0x${string}`],
+              args: [commitment as `0x${string}`, tokenAddress, amount],
             })
           }
         } catch (depositErr: any) {
@@ -306,19 +303,70 @@ export function useGrimPool() {
         setState('confirming')
         const receipt = await publicClient.waitForTransactionReceipt({ hash })
 
-        // 5. Parse logs to get leaf index
-        const logs = parseEventLogs({
-          abi: grimPoolMultiTokenConfig.abi,
-          logs: receipt.logs,
-          eventName: 'Deposit',
-        })
-
-        const depositLog = logs[0] as unknown as { args: { leafIndex: bigint } } | undefined
-        if (!depositLog) {
-          throw new Error('Deposit event not found in logs')
+        // Check if transaction reverted
+        if (receipt.status === 'reverted') {
+          console.error('Deposit transaction reverted:', hash)
+          throw new Error('Deposit transaction failed. The contract rejected the deposit.')
         }
 
-        const leafIndex = Number(depositLog.args.leafIndex)
+        // 5. Parse logs to get leaf index
+        console.log('Transaction receipt status:', receipt.status)
+        console.log('Transaction receipt logs:', receipt.logs)
+
+        let leafIndex = 0
+
+        try {
+          // Try parsing with our ABI first
+          const logs = parseEventLogs({
+            abi: grimPoolMultiTokenConfig.abi,
+            logs: receipt.logs,
+            eventName: 'Deposit',
+          })
+
+          console.log('Parsed deposit logs:', logs)
+
+          const depositLog = logs[0] as unknown as { args: { leafIndex: bigint } } | undefined
+          if (depositLog?.args?.leafIndex !== undefined) {
+            leafIndex = Number(depositLog.args.leafIndex)
+            console.log('Found leafIndex from parsed event:', leafIndex)
+          }
+        } catch (parseErr) {
+          console.warn('Failed to parse with standard ABI, trying manual decode:', parseErr)
+        }
+
+        // Fallback: manually search for leafIndex in raw logs if parsing failed
+        if (leafIndex === 0 && receipt.logs.length > 0) {
+          for (const log of receipt.logs) {
+            // The Deposit event topic hash
+            // Try to extract leafIndex from the data field
+            if (log.data && log.data.length >= 66) {
+              // leafIndex is typically the first non-indexed parameter (uint32)
+              // In a 32-byte word, it's right-padded
+              const dataWithoutPrefix = log.data.slice(2)
+              // First 32 bytes (64 hex chars) should be leafIndex as uint32
+              const leafIndexHex = dataWithoutPrefix.slice(0, 64)
+              const parsedLeafIndex = parseInt(leafIndexHex, 16)
+              if (!isNaN(parsedLeafIndex) && parsedLeafIndex < 1000000) {
+                leafIndex = parsedLeafIndex
+                console.log('Extracted leafIndex from raw log data:', leafIndex)
+                break
+              }
+            }
+          }
+        }
+
+        // If we still couldn't find leafIndex, use deposit count as fallback
+        if (leafIndex === 0) {
+          console.warn('Could not parse leafIndex from logs, using deposit count')
+          const depositCount = await publicClient.readContract({
+            ...grimPoolMultiTokenConfig,
+            functionName: 'getDepositCount',
+            args: [],
+          })
+          // The leafIndex is 0-based, so the most recent deposit is count - 1
+          leafIndex = Number(depositCount) - 1
+          console.log('Using deposit count as leafIndex:', leafIndex)
+        }
 
         // 6. Save deposit note with leaf index and token info
         note.leafIndex = leafIndex

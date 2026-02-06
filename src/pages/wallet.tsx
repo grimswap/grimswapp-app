@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
-import { AddressDisplay } from '@/components/ui/copy-button'
+import { TransactionSuccessModal } from '@/components/ui/transaction-success-modal'
 import { cn } from '@/lib/utils'
 import { ETH, formatTokenAmount } from '@/lib/tokens'
 import {
@@ -111,6 +111,17 @@ export function WalletPage() {
   const [claimError, setClaimError] = useState<string | null>(null)
   const [isRefreshingBalances, setIsRefreshingBalances] = useState(false)
 
+  // Success modal state
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [successDetails, setSuccessDetails] = useState<{
+    type: 'deposit' | 'claim'
+    txHash: string
+    amount: string
+    tokenSymbol: string
+    tokenLogo?: string
+    destination?: string
+  } | null>(null)
+
   // Refresh stealth balances on mount and when addresses change
   useEffect(() => {
     if (isConnected && unclaimedAddresses.length > 0) {
@@ -133,13 +144,20 @@ export function WalletPage() {
     return () => ctx.revert()
   }, [])
 
-  // Calculate total value from unspent notes
-  const totalNoteValue = unspentNotes.reduce((sum, note) => {
-    const amount = Number(formatUnits(BigInt(note.amount),
-      note.tokenSymbol === 'ETH' ? 18 : 6
-    ))
-    return sum + amount
-  }, 0)
+  // Calculate total value from unspent notes - separate by token
+  const ethNoteValue = unspentNotes
+    .filter(note => note.tokenSymbol === 'ETH' || !note.tokenSymbol)
+    .reduce((sum, note) => {
+      const amount = Number(formatUnits(BigInt(note.amount), 18))
+      return sum + amount
+    }, 0)
+
+  const usdcNoteValue = unspentNotes
+    .filter(note => note.tokenSymbol === 'USDC')
+    .reduce((sum, note) => {
+      const amount = Number(formatUnits(BigInt(note.amount), 6))
+      return sum + amount
+    }, 0)
 
   // Handle deposit (ETH or USDC)
   const handleDeposit = async () => {
@@ -150,6 +168,16 @@ export function WalletPage() {
     const result = await deposit(token.address, token.symbol, amount)
 
     if (result) {
+      // Show success modal
+      setSuccessDetails({
+        type: 'deposit',
+        txHash: result.txHash,
+        amount: depositAmount,
+        tokenSymbol: token.symbol,
+        tokenLogo: token.logoURI,
+      })
+      setShowSuccessModal(true)
+
       setIsDepositModalOpen(false)
       setDepositAmount('')
       setDepositToken('ETH')
@@ -339,6 +367,23 @@ export function WalletPage() {
       // Mark as claimed
       await markAsClaimed(selectedStealth.address, txHash, claimDestination as `0x${string}`)
 
+      // Calculate claimed amount for success modal
+      const claimedAmount = claimTokenType === 'USDC' || claimTokenType === 'BOTH'
+        ? formatUnits(usdcBalance, 6)
+        : formatUnits(ethBalance, 18)
+      const claimedToken = claimTokenType === 'USDC' ? USDC : ETH
+
+      // Show success modal
+      setSuccessDetails({
+        type: 'claim',
+        txHash: txHash,
+        amount: claimedAmount,
+        tokenSymbol: claimTokenType === 'BOTH' ? 'USDC + ETH' : claimedToken.symbol,
+        tokenLogo: claimedToken.logoURI,
+        destination: claimDestination,
+      })
+      setShowSuccessModal(true)
+
       // Close modal
       setIsClaimModalOpen(false)
       setSelectedStealth(null)
@@ -400,22 +445,7 @@ export function WalletPage() {
         </div>
 
         {/* Stats Grid */}
-        <div className="wallet-element grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Connected Wallet */}
-          <Card glow="purple">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-arcane-purple/20">
-                  <Wallet className="w-5 h-5 text-ethereal-cyan" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-mist-gray mb-0.5">Connected</p>
-                  {address && <AddressDisplay address={address} chars={4} />}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
+        <div className="wallet-element grid grid-cols-2 sm:grid-cols-4 gap-4">
           {/* Unspent Notes */}
           <Card glow="green">
             <CardContent className="p-4">
@@ -433,7 +463,7 @@ export function WalletPage() {
             </CardContent>
           </Card>
 
-          {/* Total Deposited */}
+          {/* Total Deposited - ETH */}
           <Card glow="cyan">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
@@ -441,9 +471,26 @@ export function WalletPage() {
                   <img src={ETH.logoURI} alt="ETH" className="w-10 h-10 object-contain" />
                 </div>
                 <div>
-                  <p className="text-xs text-mist-gray mb-0.5">In Privacy Pool</p>
+                  <p className="text-xs text-mist-gray mb-0.5">ETH in Pool</p>
                   <p className="text-xl font-mono text-ghost-white">
-                    {totalNoteValue < 0.01 ? totalNoteValue.toFixed(4) : totalNoteValue.toFixed(4)} ETH
+                    {ethNoteValue.toFixed(4)} ETH
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Total Deposited - USDC */}
+          <Card glow="purple">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center bg-charcoal overflow-hidden">
+                  <img src={USDC.logoURI} alt="USDC" className="w-10 h-10 object-contain" />
+                </div>
+                <div>
+                  <p className="text-xs text-mist-gray mb-0.5">USDC in Pool</p>
+                  <p className="text-xl font-mono text-ghost-white">
+                    {usdcNoteValue.toFixed(2)} USDC
                   </p>
                 </div>
               </div>
@@ -727,7 +774,10 @@ export function WalletPage() {
                     const usdcBal = stealth.balances?.usdc
                       ? formatUnits(BigInt(stealth.balances.usdc), 6)
                       : '0'
-                    const hasBalance = parseFloat(usdcBal) > 0
+                    // Check if there's meaningful balance (ETH > 0.001 for gas buffer, or any USDC)
+                    const hasEthBalance = parseFloat(ethBal) > 0.001 // More than just gas funding
+                    const hasUsdcBalance = parseFloat(usdcBal) > 0
+                    const hasBalance = hasEthBalance || hasUsdcBalance
                     // Calculate USD equivalent values
                     const ethUsdValue = ethPrice ? parseFloat(ethBal) * ethPrice : 0
                     const totalUsdValue = ethUsdValue + parseFloat(usdcBal)
@@ -1377,6 +1427,26 @@ export function WalletPage() {
           )}
         </div>
       </Modal>
+
+      {/* Success Modal */}
+      {successDetails && (
+        <TransactionSuccessModal
+          isOpen={showSuccessModal}
+          onClose={() => {
+            setShowSuccessModal(false)
+            setSuccessDetails(null)
+          }}
+          details={{
+            type: successDetails.type,
+            txHash: successDetails.txHash,
+            fromToken: successDetails.tokenSymbol,
+            fromAmount: successDetails.amount,
+            fromLogo: successDetails.tokenLogo,
+            recipient: successDetails.destination,
+          }}
+          explorerBaseUrl="https://unichain-sepolia.blockscout.com"
+        />
+      )}
     </div>
   )
 }

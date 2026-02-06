@@ -1,5 +1,4 @@
 import { type Address } from 'viem'
-import { RELAYER_DEFAULT_URL } from '@grimswap/circuits'
 
 // Unichain Sepolia (Chain ID: 1301)
 export const UNICHAIN_SEPOLIA = {
@@ -21,8 +20,9 @@ export const UNICHAIN_SEPOLIA = {
   },
 } as const
 
-// Relayer API URL (from SDK)
-export const RELAYER_URL = RELAYER_DEFAULT_URL
+// Relayer API URL (override for testing)
+// TODO: Switch back to RELAYER_DEFAULT_URL from '@grimswap/circuits' when SDK is updated
+export const RELAYER_URL = 'https://services.grimswap.com'
 
 // V3 Contract Addresses (Multi-Token Support)
 export const CONTRACTS_V3 = {

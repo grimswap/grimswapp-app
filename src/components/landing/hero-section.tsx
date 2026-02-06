@@ -23,20 +23,20 @@ interface StatItemProps {
 function StatItem({ icon: Icon, value, label, isLoading, showDivider = true }: StatItemProps) {
   return (
     <div className="stat-item flex items-start gap-4 relative">
-      {/* Divider */}
+      {/* Divider - only on large screens for left border */}
       {showDivider && (
         <div
-          className="absolute left-0 top-0 bottom-0 w-px hidden sm:block"
+          className="absolute left-0 top-0 bottom-0 w-px hidden lg:block"
           style={{
             background: 'linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%)',
           }}
         />
       )}
 
-      <div className={showDivider ? 'pl-6 sm:pl-8' : ''}>
+      <div className={showDivider ? 'lg:pl-8' : ''}>
         {/* Icon */}
         <div
-          className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl mb-4 flex items-center justify-center"
+          className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl mb-3 sm:mb-4 flex items-center justify-center"
           style={{
             background: 'rgba(0, 237, 218, 0.15)',
             border: '1px solid rgba(0, 237, 218, 0.3)',
@@ -47,12 +47,11 @@ function StatItem({ icon: Icon, value, label, isLoading, showDivider = true }: S
 
         {/* Value */}
         {isLoading ? (
-          <div className="h-10 w-28 bg-white/10 rounded mb-2 animate-pulse" />
+          <div className="h-8 sm:h-10 w-20 sm:w-28 bg-white/10 rounded mb-2 animate-pulse" />
         ) : (
           <div
-            className="text-white mb-1"
+            className="text-white mb-1 text-xl sm:text-2xl lg:text-3xl"
             style={{
-              fontSize: 'clamp(1.5rem, 3vw, 2.5rem)',
               fontWeight: 400,
               fontFamily: 'var(--font-display)',
             }}
@@ -62,7 +61,7 @@ function StatItem({ icon: Icon, value, label, isLoading, showDivider = true }: S
         )}
 
         {/* Label */}
-        <div className="text-gray-400 text-sm sm:text-base">{label}</div>
+        <div className="text-gray-400 text-xs sm:text-sm lg:text-base">{label}</div>
       </div>
     </div>
   )
@@ -268,7 +267,7 @@ export function HeroSection() {
               </div>
 
               {/* Stats Grid */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 sm:gap-0">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-y-8 gap-x-4 sm:gap-6 lg:gap-0">
                 {statItems.map((item, index) => (
                   <StatItem
                     key={item.label}

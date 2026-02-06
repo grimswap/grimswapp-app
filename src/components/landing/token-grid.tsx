@@ -16,38 +16,48 @@ function TokenItem({ token, comingSoon, showDivider = true }: TokenItemProps) {
 
   if (comingSoon) {
     return (
-      <div className="token-item flex items-center gap-5 px-8 py-6 relative">
-        {/* Divider */}
+      <div className="token-item flex items-center gap-4 sm:gap-5 px-5 sm:px-8 py-5 sm:py-6 relative">
+        {/* Divider - horizontal on mobile, vertical on desktop */}
         {showDivider && (
-          <div
-            className="absolute left-0 top-4 bottom-4 w-px"
-            style={{
-              background: 'linear-gradient(180deg, transparent 0%, rgba(164, 35, 139, 0.3) 50%, transparent 100%)',
-            }}
-          />
+          <>
+            {/* Mobile: horizontal divider */}
+            <div
+              className="absolute left-5 right-5 top-0 h-px sm:hidden"
+              style={{
+                background: 'linear-gradient(90deg, transparent 0%, rgba(164, 35, 139, 0.3) 50%, transparent 100%)',
+              }}
+            />
+            {/* Desktop: vertical divider */}
+            <div
+              className="absolute left-0 top-4 bottom-4 w-px hidden sm:block"
+              style={{
+                background: 'linear-gradient(180deg, transparent 0%, rgba(164, 35, 139, 0.3) 50%, transparent 100%)',
+              }}
+            />
+          </>
         )}
 
         {/* Icon */}
         <div
-          className="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0"
+          className="w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center flex-shrink-0"
           style={{
             background: 'rgba(164, 35, 139, 0.1)',
             border: '2px dashed rgba(164, 35, 139, 0.3)',
           }}
         >
-          <Plus className="w-6 h-6 text-gray-500" />
+          <Plus className="w-5 h-5 sm:w-6 sm:h-6 text-gray-500" />
         </div>
 
         {/* Text */}
         <div className="flex flex-col">
           <span
-            className="text-lg text-gray-400 mb-0.5"
+            className="text-base sm:text-lg text-gray-400 mb-0.5"
             style={{ fontFamily: "'Crimson Text', serif" }}
           >
             More
           </span>
           <span
-            className="text-sm text-gray-500"
+            className="text-xs sm:text-sm text-gray-500"
             style={{ fontFamily: 'Poppins, sans-serif' }}
           >
             Coming Soon
@@ -61,23 +71,33 @@ function TokenItem({ token, comingSoon, showDivider = true }: TokenItemProps) {
 
   return (
     <div
-      className="token-item flex items-center gap-5 px-8 py-6 relative cursor-pointer transition-all duration-200"
+      className="token-item flex items-center gap-4 sm:gap-5 px-5 sm:px-8 py-5 sm:py-6 relative cursor-pointer transition-all duration-200"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Divider */}
+      {/* Divider - horizontal on mobile, vertical on desktop */}
       {showDivider && (
-        <div
-          className="absolute left-0 top-4 bottom-4 w-px"
-          style={{
-            background: 'linear-gradient(180deg, transparent 0%, rgba(164, 35, 139, 0.3) 50%, transparent 100%)',
-          }}
-        />
+        <>
+          {/* Mobile: horizontal divider */}
+          <div
+            className="absolute left-5 right-5 top-0 h-px sm:hidden"
+            style={{
+              background: 'linear-gradient(90deg, transparent 0%, rgba(164, 35, 139, 0.3) 50%, transparent 100%)',
+            }}
+          />
+          {/* Desktop: vertical divider */}
+          <div
+            className="absolute left-0 top-4 bottom-4 w-px hidden sm:block"
+            style={{
+              background: 'linear-gradient(180deg, transparent 0%, rgba(164, 35, 139, 0.3) 50%, transparent 100%)',
+            }}
+          />
+        </>
       )}
 
       {/* Token Icon */}
       <div
-        className="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden transition-transform duration-200"
+        className="w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden transition-transform duration-200"
         style={{
           background: '#121214',
           border: `2px solid ${isHovered ? '#00EDDA' : token.color || '#A4238B'}`,
@@ -85,10 +105,10 @@ function TokenItem({ token, comingSoon, showDivider = true }: TokenItemProps) {
         }}
       >
         {token.logoURI ? (
-          <img src={token.logoURI} alt={token.symbol} className="w-10 h-10 object-contain" />
+          <img src={token.logoURI} alt={token.symbol} className="w-8 h-8 sm:w-10 sm:h-10 object-contain" />
         ) : (
           <span
-            className="text-xl font-medium"
+            className="text-lg sm:text-xl font-medium"
             style={{ color: token.color || '#A4238B' }}
           >
             {token.symbol.charAt(0)}
@@ -99,13 +119,13 @@ function TokenItem({ token, comingSoon, showDivider = true }: TokenItemProps) {
       {/* Token Info */}
       <div className="flex flex-col">
         <span
-          className="text-lg text-white mb-0.5"
+          className="text-base sm:text-lg text-white mb-0.5"
           style={{ fontFamily: "'Crimson Text', serif" }}
         >
           {token.name}
         </span>
         <span
-          className="text-sm text-gray-400"
+          className="text-xs sm:text-sm text-gray-400"
           style={{ fontFamily: 'Poppins, sans-serif' }}
         >
           {token.symbol}
@@ -180,16 +200,15 @@ export function TokenGridSection() {
           </p>
         </div>
 
-        {/* Tokens Container - Pill with gradient border */}
+        {/* Tokens Container - Rounded on mobile, pill on desktop */}
         <div
-          className="tokens-container rounded-full p-[2px] mx-auto"
+          className="tokens-container rounded-2xl sm:rounded-full p-[2px] mx-auto w-full sm:w-auto max-w-sm sm:max-w-none"
           style={{
             background: 'linear-gradient(135deg, #A4238B 0%, #6B21A8 50%, #00EDDA 100%)',
-            width: 'fit-content',
           }}
         >
           <div
-            className="rounded-full flex flex-col sm:flex-row items-stretch"
+            className="rounded-2xl sm:rounded-full flex flex-col sm:flex-row items-stretch"
             style={{ background: '#121214' }}
           >
             {supportedTokens.map((item, index) => (

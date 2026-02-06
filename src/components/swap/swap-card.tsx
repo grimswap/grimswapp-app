@@ -6,6 +6,7 @@ import { TokenInput } from './token-input'
 import { TokenSelectorModal, type Token } from './token-selector-modal'
 import { SettingsPanel } from './settings-panel'
 import { ShimmerButton } from '@/components/ui/shimmer-button'
+import { TransactionSuccessModal } from '@/components/ui/transaction-success-modal'
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
 import { useSettings } from '@/hooks/use-settings'
 import { useToast } from '@/hooks/use-toast'
@@ -33,13 +34,21 @@ export function SwapCard() {
   const [showSettings, setShowSettings] = useState(false)
   const [swapState, setSwapState] = useState<SwapState>('idle')
   const [swapStep, setSwapStep] = useState('')
-  const [txHash, setTxHash] = useState<string | null>(null)
   const [swapError, setSwapError] = useState<string | null>(null)
   const [relayerInfo, setRelayerInfo] = useState<RelayerInfo | null>(null)
 
   // Token selector modal state
   const [tokenModalOpen, setTokenModalOpen] = useState(false)
   const [selectingFor, setSelectingFor] = useState<'from' | 'to'>('from')
+
+  // Success modal state
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [successDetails, setSuccessDetails] = useState<{
+    txHash: string
+    fromAmount: string
+    toAmount: string
+    stealthAddress?: string
+  } | null>(null)
 
   const cardRef = useRef<HTMLDivElement>(null)
   const glowRef = useRef<HTMLDivElement>(null)
@@ -57,7 +66,7 @@ export function SwapCard() {
   const { getProof: getMerkleProof } = useMerkleTree()
 
   // Stealth address management for receiving private swap outputs
-  const { createStealthAddress, updateSwapTxHash } = useStealthAddresses()
+  const { generateStealthKeypairOnly, saveStealthAddress, updateSwapTxHash } = useStealthAddresses()
 
   // Fetch real pool state from StateView
   const {
@@ -208,7 +217,6 @@ export function SwapCard() {
   const resetSwapState = useCallback(() => {
     setSwapState('idle')
     setSwapStep('')
-    setTxHash(null)
     setSwapError(null)
   }, [])
 
@@ -229,7 +237,6 @@ export function SwapCard() {
     try {
       // Reset and start
       setSwapError(null)
-      setTxHash(null)
       setSwapState('preparing')
       setSwapStep('Preparing swap...')
 
@@ -256,7 +263,8 @@ export function SwapCard() {
       }
 
       setSwapStep('Creating stealth address...')
-      const stealthRecord = await createStealthAddress()
+      // Generate keypair but don't save until swap succeeds
+      const stealthRecord = generateStealthKeypairOnly()
       const stealthAddress = stealthRecord.address
 
       setSwapStep('Computing ZK-SNARK proof...')
@@ -367,9 +375,11 @@ export function SwapCard() {
       // Success!
       setSwapState('success')
       setSwapStep('')
-      setTxHash(relayResponse.txHash || null)
 
-      // Save stealth address link
+      // NOW save the stealth address since swap succeeded
+      await saveStealthAddress(stealthRecord)
+
+      // Update stealth address with swap tx hash
       if (relayResponse.txHash) {
         await updateSwapTxHash(stealthAddress, relayResponse.txHash)
       }
@@ -380,7 +390,15 @@ export function SwapCard() {
       }
 
       const swappedAmount = formatUnits(noteAmount, fromToken.decimals)
-      toast.success('Swap Complete', `Swapped ${swappedAmount} ${fromToken.symbol} → ${toToken.symbol}`)
+
+      // Show success modal
+      setSuccessDetails({
+        txHash: relayResponse.txHash || '',
+        fromAmount: swappedAmount,
+        toAmount: toAmount,
+        stealthAddress: stealthAddress,
+      })
+      setShowSuccessModal(true)
 
       // Reset form after delay
       setTimeout(() => {
@@ -396,7 +414,7 @@ export function SwapCard() {
       setSwapError(error instanceof Error ? error.message : 'Unknown error')
       toast.error('Swap Failed', error instanceof Error ? error.message : 'Unknown error')
     }
-  }, [isConnected, address, relayerInfo, isPrivacyPool, availableNotes, fromToken, toToken, toAmount, zeroForOne, toast, createStealthAddress, updateSwapTxHash, getMerkleProof, publicClient, walletClient, currentPrice, spendNote, resetSwapState])
+  }, [isConnected, address, relayerInfo, isPrivacyPool, availableNotes, fromToken, toToken, toAmount, zeroForOne, toast, generateStealthKeypairOnly, saveStealthAddress, updateSwapTxHash, getMerkleProof, publicClient, walletClient, currentPrice, spendNote, resetSwapState])
 
   const handleFlipTokens = () => {
     if (cardRef.current) {
@@ -633,25 +651,6 @@ export function SwapCard() {
             </div>
           )}
 
-          {/* Success Display */}
-          {swapState === 'success' && txHash && (
-            <div className="mb-5 p-3 rounded-xl bg-spectral-green/10 border border-spectral-green/30">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-spectral-green font-medium">Swap Successful!</span>
-                <a
-                  href={`https://sepolia.uniscan.xyz/tx/${txHash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-spectral-green hover:underline"
-                >
-                  View TX <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <p className="text-xs text-mist-gray mt-1">
-                {toToken.symbol} sent to stealth address. Check Grimoire to claim.
-              </p>
-            </div>
-          )}
 
           {/* From Token */}
           <TokenInput
@@ -754,6 +753,29 @@ export function SwapCard() {
         onSelect={handleTokenSelect}
         selectedToken={selectingFor === 'from' ? fromToken : toToken}
       />
+
+      {/* Success Modal */}
+      {successDetails && (
+        <TransactionSuccessModal
+          isOpen={showSuccessModal}
+          onClose={() => {
+            setShowSuccessModal(false)
+            setSuccessDetails(null)
+          }}
+          details={{
+            type: 'swap',
+            txHash: successDetails.txHash,
+            fromToken: fromToken.symbol,
+            toToken: toToken.symbol,
+            fromAmount: successDetails.fromAmount,
+            toAmount: successDetails.toAmount,
+            fromLogo: fromToken.logoURI,
+            toLogo: toToken.logoURI,
+            stealthAddress: successDetails.stealthAddress,
+          }}
+          explorerBaseUrl="https://unichain-sepolia.blockscout.com"
+        />
+      )}
     </>
   )
 }

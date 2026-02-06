@@ -11,16 +11,31 @@ import { ETH, USDC } from '@/lib/tokens'
 export function PoolStatistics() {
   const { poolState, currentPrice, isInitialized, isLoading } = useStateView(DEFAULT_POOL_KEY)
 
-  // Calculate reserves from liquidity (same formula as pools page)
+  // Calculate reserves from liquidity using Uniswap v3/v4 concentrated liquidity formula
+  // For concentrated liquidity: L = sqrt(x * y) at current price
+  // Virtual reserves: x = L / sqrt(P), y = L * sqrt(P)
   const estimateReserves = () => {
-    if (!poolState || poolState.liquidity === 0n || !currentPrice) {
+    if (!poolState || poolState.liquidity === 0n || !currentPrice || currentPrice <= 0) {
       return { ethReserve: 0, usdcReserve: 0 }
     }
 
     const liqNum = Number(poolState.liquidity)
-    // Reverse the liquidity calculation: liquidity = ETH_wei / 10^6
-    const ethReserve = liqNum / 1e12
-    const usdcReserve = ethReserve * currentPrice
+
+    // Convert price to raw ratio (accounting for decimal difference)
+    // price is USDC per ETH (e.g., 2500)
+    // raw_price = price * 10^6 / 10^18 = price / 10^12
+    const rawPrice = currentPrice / 1e12
+    const sqrtRawPrice = Math.sqrt(rawPrice)
+
+    // Virtual reserves in raw units:
+    // x (ETH in wei) = L / sqrt(rawPrice)
+    // y (USDC in smallest units) = L * sqrt(rawPrice)
+    const ethReserveWei = liqNum / sqrtRawPrice
+    const usdcReserveUnits = liqNum * sqrtRawPrice
+
+    // Convert to human-readable
+    const ethReserve = ethReserveWei / 1e18
+    const usdcReserve = usdcReserveUnits / 1e6
 
     return { ethReserve, usdcReserve }
   }
