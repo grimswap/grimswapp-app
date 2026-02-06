@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useAccount, usePublicClient, useWalletClient, useWatchContractEvent } from 'wagmi'
 import { type Address, type Hash, parseEventLogs } from 'viem'
-import { grimPoolConfig, getERC20Config, isNativeToken } from '@/lib/contracts'
+import { getERC20Config, isNativeToken } from '@/lib/contracts'
 import { CONTRACTS } from '@/lib/constants'
 import { createDepositNote, formatCommitmentForContract, type DepositNote } from '@/lib/zk'
 import { useDepositNotes } from './use-deposit-notes'
