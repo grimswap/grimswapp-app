@@ -13,14 +13,36 @@ function AppContent() {
 
   return (
     <>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/swap" element={<SwapPage />} />
-          <Route path="/pools" element={<PoolsPage />} />
-          <Route path="/wallet" element={<WalletPage />} />
-        </Routes>
-      </Layout>
+      <Routes>
+        {/* Landing page - no layout wrapper (has its own header/bg) */}
+        <Route path="/" element={<HomePage />} />
+
+        {/* App pages - with layout wrapper */}
+        <Route
+          path="/swap"
+          element={
+            <Layout>
+              <SwapPage />
+            </Layout>
+          }
+        />
+        <Route
+          path="/pools"
+          element={
+            <Layout>
+              <PoolsPage />
+            </Layout>
+          }
+        />
+        <Route
+          path="/wallet"
+          element={
+            <Layout>
+              <WalletPage />
+            </Layout>
+          }
+        />
+      </Routes>
       <ToastContainer toasts={toasts} onClose={removeToast} />
     </>
   )
