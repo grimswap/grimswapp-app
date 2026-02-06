@@ -1,5 +1,5 @@
 import { type Address } from 'viem'
-import { CONTRACTS } from './constants'
+import { CONTRACTS, CONTRACTS_V3, V3_POOL_CONFIG, V3_SQRT_PRICE_LIMITS } from './constants'
 import {
   GRIM_POOL_ABI,
   GRIM_SWAP_ZK_ABI,
@@ -242,22 +242,58 @@ export const ETH_USDC_POOL_KEY: PoolKey = {
   hooks: '0x0000000000000000000000000000000000000000' as Address, // No hooks (vanilla Uniswap)
 }
 
-// ETH/USDC pool key with GrimSwapZK hook (privacy-enabled pool)
-// NOTE: Using fee=3000, tickSpacing=60 which is compatible with the new deployed hook
-export const ETH_USDC_GRIMSWAP_POOL_KEY: PoolKey = {
-  currency0: CONTRACTS.nativeEth, // ETH
-  currency1: CONTRACTS.usdc,       // USDC
-  fee: 3000,                       // 0.3% fee tier
-  tickSpacing: 60,
-  hooks: CONTRACTS.grimSwapZK,     // GrimSwapZK hook for privacy
+// V3 ETH/USDC GrimSwap Privacy Pool (with ZK hook)
+// Uses fee=500 (0.05%), tickSpacing=10 for the new V3 pool
+export const ETH_USDC_GRIMSWAP_POOL_KEY_V3: PoolKey = {
+  currency0: CONTRACTS_V3.nativeEth, // ETH
+  currency1: CONTRACTS_V3.usdc,       // USDC
+  fee: V3_POOL_CONFIG.fee,            // 0.05% fee tier (V3)
+  tickSpacing: V3_POOL_CONFIG.tickSpacing, // 10 (V3)
+  hooks: CONTRACTS_V3.grimSwapZK,     // V3 GrimSwapZK hook
 }
 
-// Default pool key (ETH/USDC GrimSwap Privacy Pool for private swaps)
-export const DEFAULT_POOL_KEY: PoolKey = ETH_USDC_GRIMSWAP_POOL_KEY
+// Legacy V2 ETH/USDC pool key with GrimSwapZK hook (kept for reference)
+export const ETH_USDC_GRIMSWAP_POOL_KEY: PoolKey = ETH_USDC_GRIMSWAP_POOL_KEY_V3
 
-// Sqrt price limits for swaps
-export const MIN_SQRT_PRICE = BigInt('4295128739') + BigInt(1)
-export const MAX_SQRT_PRICE = BigInt('1461446703485210103287273052203988822378723970342') - BigInt(1)
+// Default pool key - uses V3 configuration
+export const DEFAULT_POOL_KEY: PoolKey = ETH_USDC_GRIMSWAP_POOL_KEY_V3
+
+// V3 Sqrt price limits for swaps (from relayer docs)
+export const MIN_SQRT_PRICE = V3_SQRT_PRICE_LIMITS.MIN  // ETH → USDC
+export const MAX_SQRT_PRICE = V3_SQRT_PRICE_LIMITS.MAX  // USDC → ETH
+
+/**
+ * Get the correct sqrt price limit based on swap direction
+ * @param zeroForOne - true if swapping token0 (ETH) for token1 (USDC)
+ */
+export function getSqrtPriceLimitX96(zeroForOne: boolean): bigint {
+  return zeroForOne ? MIN_SQRT_PRICE : MAX_SQRT_PRICE
+}
+
+/**
+ * Determine swap direction based on token addresses
+ * @param fromToken - Token being sold
+ * @param _toToken - Token being bought (kept for API clarity)
+ * @param poolKey - Pool key for the swap
+ */
+export function getSwapDirection(
+  fromToken: Address,
+  _toToken: Address,
+  poolKey: PoolKey = DEFAULT_POOL_KEY
+): { zeroForOne: boolean; sqrtPriceLimitX96: bigint } {
+  const zeroForOne = fromToken.toLowerCase() === poolKey.currency0.toLowerCase()
+  return {
+    zeroForOne,
+    sqrtPriceLimitX96: getSqrtPriceLimitX96(zeroForOne),
+  }
+}
+
+/**
+ * Check if a token is native ETH
+ */
+export function isNativeToken(tokenAddress: Address): boolean {
+  return tokenAddress.toLowerCase() === CONTRACTS.nativeEth.toLowerCase()
+}
 
 // Export all contract addresses
 export { CONTRACTS }

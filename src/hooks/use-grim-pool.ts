@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import { useAccount, usePublicClient, useWalletClient, useWatchContractEvent } from 'wagmi'
 import { type Address, type Hash, parseEventLogs } from 'viem'
-import { grimPoolConfig, getERC20Config } from '@/lib/contracts'
+import { grimPoolConfig, getERC20Config, isNativeToken } from '@/lib/contracts'
+import { CONTRACTS } from '@/lib/constants'
 import { createDepositNote, formatCommitmentForContract, type DepositNote } from '@/lib/zk'
 import { useDepositNotes } from './use-deposit-notes'
 import { useToast } from './use-toast'
@@ -13,6 +14,83 @@ interface DepositResult {
   txHash: Hash
   leafIndex: number
 }
+
+// GrimPoolMultiToken ABI for V3 multi-token deposits
+const GRIM_POOL_MULTI_TOKEN_ABI = [
+  // ETH deposit
+  {
+    inputs: [{ name: 'commitment', type: 'bytes32' }],
+    name: 'deposit',
+    outputs: [],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+  // ERC20 deposit
+  {
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+      { name: 'commitment', type: 'bytes32' },
+    ],
+    name: 'depositToken',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  // Events
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: 'commitment', type: 'bytes32' },
+      { indexed: false, name: 'leafIndex', type: 'uint32' },
+      { indexed: false, name: 'timestamp', type: 'uint256' },
+    ],
+    name: 'Deposit',
+    type: 'event',
+  },
+  // View functions
+  {
+    inputs: [{ name: 'nullifierHash', type: 'bytes32' }],
+    name: 'isSpent',
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getDepositCount',
+    outputs: [{ name: '', type: 'uint32' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getLastRoot',
+    outputs: [{ name: '', type: 'bytes32' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ name: 'root', type: 'bytes32' }],
+    name: 'isKnownRoot',
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ name: 'root', type: 'bytes32' }],
+    name: 'addKnownRoot',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+] as const
+
+// V3 GrimPool config
+const grimPoolMultiTokenConfig = {
+  address: CONTRACTS.grimPoolMultiToken,
+  abi: GRIM_POOL_MULTI_TOKEN_ABI,
+} as const
 
 /**
  * Hook for depositing to GrimPool
@@ -77,8 +155,9 @@ export function useGrimPool() {
   )
 
   /**
-   * Deposit ETH to GrimPool
-   * Note: GrimPool is ETH-only (payable). Amount is sent as msg.value.
+   * Deposit to GrimPoolMultiToken (V3 - supports ETH and ERC20)
+   * - ETH: Uses deposit(commitment) with value
+   * - ERC20: Uses depositToken(token, amount, commitment) after approval
    */
   const deposit = useCallback(
     async (
@@ -91,12 +170,7 @@ export function useGrimPool() {
         return null
       }
 
-      // GrimPool only supports ETH deposits
-      const isETH = tokenAddress === '0x0000000000000000000000000000000000000000'
-      if (!isETH) {
-        setError('GrimPool only supports ETH deposits')
-        return null
-      }
+      const isETH = isNativeToken(tokenAddress)
 
       try {
         setState('generating')
@@ -107,16 +181,43 @@ export function useGrimPool() {
         setCurrentNote(note)
         const commitment = formatCommitmentForContract(note.commitment)
 
-        // 2. Deposit to GrimPool (ETH is sent as value)
-        setState('depositing')
-        toast.info('Depositing', 'Submitting ETH deposit to GrimPool...')
+        // 2. For ERC20, check and request approval
+        if (!isETH) {
+          const currentAllowance = await checkAllowance(tokenAddress, amount)
 
-        const hash = await walletClient.writeContract({
-          ...grimPoolConfig,
-          functionName: 'deposit',
-          args: [commitment as `0x${string}`],
-          value: amount, // Send ETH as value
-        })
+          if (currentAllowance < amount) {
+            setState('approving')
+            toast.info('Approving', `Approving ${tokenSymbol} for deposit...`)
+
+            const approveTxHash = await approveToken(tokenAddress, amount)
+            if (approveTxHash) {
+              await publicClient.waitForTransactionReceipt({ hash: approveTxHash })
+            }
+          }
+        }
+
+        // 3. Execute deposit
+        setState('depositing')
+        toast.info('Depositing', `Submitting ${tokenSymbol} deposit to GrimPool...`)
+
+        let hash: Hash
+
+        if (isETH) {
+          // ETH deposit: deposit(commitment) with value
+          hash = await walletClient.writeContract({
+            ...grimPoolMultiTokenConfig,
+            functionName: 'deposit',
+            args: [commitment as `0x${string}`],
+            value: amount,
+          })
+        } else {
+          // ERC20 deposit: depositToken(token, amount, commitment)
+          hash = await walletClient.writeContract({
+            ...grimPoolMultiTokenConfig,
+            functionName: 'depositToken',
+            args: [tokenAddress, amount, commitment as `0x${string}`],
+          })
+        }
 
         // 4. Wait for confirmation
         setState('confirming')
@@ -124,7 +225,7 @@ export function useGrimPool() {
 
         // 5. Parse logs to get leaf index
         const logs = parseEventLogs({
-          abi: grimPoolConfig.abi,
+          abi: grimPoolMultiTokenConfig.abi,
           logs: receipt.logs,
           eventName: 'Deposit',
         })
@@ -136,14 +237,14 @@ export function useGrimPool() {
 
         const leafIndex = Number(depositLog.args.leafIndex)
 
-        // 6. Save deposit note with leaf index
+        // 6. Save deposit note with leaf index and token info
         note.leafIndex = leafIndex
 
         // Save note with tx hash as metadata
         await saveNote(note, tokenAddress, tokenSymbol, hash)
 
         setState('success')
-        toast.success('Deposit Successful', `Deposited to leaf index ${leafIndex}`)
+        toast.success('Deposit Successful', `Deposited ${tokenSymbol} to leaf index ${leafIndex}`)
 
         return {
           note,
@@ -169,7 +270,7 @@ export function useGrimPool() {
 
     try {
       const count = await publicClient.readContract({
-        ...grimPoolConfig,
+        ...grimPoolMultiTokenConfig,
         functionName: 'getDepositCount',
         args: [],
       })
@@ -189,7 +290,7 @@ export function useGrimPool() {
 
     try {
       const root = await publicClient.readContract({
-        ...grimPoolConfig,
+        ...grimPoolMultiTokenConfig,
         functionName: 'getLastRoot',
         args: [],
       })
@@ -217,7 +318,7 @@ export function useGrimPool() {
         const nullifierHashHex = `0x${nullifierHash.toString(16).padStart(64, '0')}` as `0x${string}`
 
         const spent = await publicClient.readContract({
-          ...grimPoolConfig,
+          ...grimPoolMultiTokenConfig,
           functionName: 'isSpent',
           args: [nullifierHashHex],
         })
@@ -260,11 +361,11 @@ export function useGrimPool() {
 }
 
 /**
- * Hook to watch for new deposits
+ * Hook to watch for new deposits (V3 - GrimPoolMultiToken)
  */
 export function useWatchDeposits(onDeposit?: (data: any) => void) {
   useWatchContractEvent({
-    ...grimPoolConfig,
+    ...grimPoolMultiTokenConfig,
     eventName: 'Deposit',
     onLogs(logs) {
       logs.forEach((log: any) => {

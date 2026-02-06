@@ -31,7 +31,7 @@ export interface RelayerInfo {
 }
 
 /**
- * Relay request payload
+ * Relay request payload (V3 - supports multi-token)
  */
 export interface RelayRequest {
   proof: {
@@ -51,6 +51,8 @@ export interface RelayRequest {
     zeroForOne: boolean
     amountSpecified: string
     sqrtPriceLimitX96: string
+    // V3: inputToken is required for ERC20 swaps, omit for ETH
+    inputToken?: string
   }
 }
 
@@ -81,18 +83,21 @@ export async function getRelayerInfo(): Promise<RelayerInfo | null> {
 }
 
 /**
- * Submit a private swap through the relayer using SDK
+ * Submit a private swap through the relayer using SDK (V3 - multi-token support)
  */
 export async function submitToRelayer(request: RelayRequest): Promise<RelayerResponse> {
   try {
+    const isERC20Swap = !!request.swapParams.inputToken
+
     console.log('Submitting to relayer via SDK:', {
       url: RELAYER_URL,
       publicSignals: request.publicSignals,
       swapParams: request.swapParams,
+      swapType: isERC20Swap ? 'ERC20' : 'ETH',
     })
 
     // Convert pool key to SDK format with Address types
-    const sdkSwapParams = {
+    const sdkSwapParams: Record<string, unknown> = {
       poolKey: {
         currency0: request.swapParams.poolKey.currency0 as Address,
         currency1: request.swapParams.poolKey.currency1 as Address,
@@ -105,11 +110,16 @@ export async function submitToRelayer(request: RelayRequest): Promise<RelayerRes
       sqrtPriceLimitX96: request.swapParams.sqrtPriceLimitX96,
     }
 
+    // V3: Add inputToken for ERC20 swaps
+    if (request.swapParams.inputToken) {
+      sdkSwapParams.inputToken = request.swapParams.inputToken
+    }
+
     const result = await sdkSubmitToRelayer(
       RELAYER_URL,
       request.proof,
       request.publicSignals,
-      sdkSwapParams
+      sdkSwapParams as Parameters<typeof sdkSubmitToRelayer>[3]
     )
 
     return result
@@ -154,15 +164,21 @@ export function formatProofForRelayer(
 }
 
 /**
- * Create swap params for relayer
+ * Create swap params for relayer (V3 - multi-token support)
+ * @param poolKey - Pool key for the swap
+ * @param zeroForOne - true if swapping currency0 for currency1
+ * @param amountSpecified - Amount to swap (negative for exact input)
+ * @param sqrtPriceLimitX96 - Price limit for the swap
+ * @param inputToken - (V3) Token address for ERC20 swaps, omit for ETH
  */
 export function createSwapParams(
   poolKey: PoolKey,
   zeroForOne: boolean,
   amountSpecified: bigint,
-  sqrtPriceLimitX96: bigint
+  sqrtPriceLimitX96: bigint,
+  inputToken?: Address
 ): RelayRequest['swapParams'] {
-  return {
+  const params: RelayRequest['swapParams'] = {
     poolKey: {
       currency0: poolKey.currency0,
       currency1: poolKey.currency1,
@@ -174,4 +190,11 @@ export function createSwapParams(
     amountSpecified: amountSpecified.toString(),
     sqrtPriceLimitX96: sqrtPriceLimitX96.toString(),
   }
+
+  // V3: Add inputToken for ERC20 swaps
+  if (inputToken && inputToken !== '0x0000000000000000000000000000000000000000') {
+    params.inputToken = inputToken
+  }
+
+  return params
 }

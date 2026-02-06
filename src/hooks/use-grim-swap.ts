@@ -3,16 +3,37 @@ import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
 import { type Address, type Hash, encodeAbiParameters, parseAbiParameters } from 'viem'
 import {
   poolHelperConfig,
-  grimPoolConfig,
   DEFAULT_POOL_KEY,
-  MIN_SQRT_PRICE,
+  getSwapDirection,
   type PoolKey,
 } from '@/lib/contracts'
+import { CONTRACTS } from '@/lib/constants'
 import { type SwapParams as ZKSwapParams } from '@/lib/zk'
 import { useZKProof } from './use-zk-proof'
 import { useMerkleTree } from './use-merkle-tree'
 import { useDepositNotes } from './use-deposit-notes'
 import { useToast } from './use-toast'
+
+// V3 GrimPoolMultiToken config
+const grimPoolMultiTokenConfig = {
+  address: CONTRACTS.grimPoolMultiToken,
+  abi: [
+    {
+      inputs: [{ name: 'root', type: 'bytes32' }],
+      name: 'isKnownRoot',
+      outputs: [{ name: '', type: 'bool' }],
+      stateMutability: 'view',
+      type: 'function',
+    },
+    {
+      inputs: [{ name: 'root', type: 'bytes32' }],
+      name: 'addKnownRoot',
+      outputs: [],
+      stateMutability: 'nonpayable',
+      type: 'function',
+    },
+  ] as const,
+}
 
 export type SwapState =
   | 'idle'
@@ -26,11 +47,12 @@ export type SwapState =
   | 'error'
 
 interface SwapParams {
-  toToken: Address
+  fromToken: Address     // Token being sold (V3: supports ETH and ERC20)
+  toToken: Address       // Token being bought
   minAmountOut: bigint
-  recipient: Address // Stealth address
-  depositNoteId: number // ID of the deposit note to use
-  poolKey?: PoolKey // Optional custom pool key
+  recipient: Address     // Stealth address
+  depositNoteId: number  // ID of the deposit note to use
+  poolKey?: PoolKey      // Optional custom pool key
 }
 
 interface SwapResult {
@@ -144,7 +166,7 @@ export function useGrimSwap() {
           throw new Error('Failed to generate Merkle proof')
         }
 
-        // Step 4: Add root to GrimPool (testnet only)
+        // Step 4: Add root to GrimPoolMultiToken (testnet only)
         setState('adding-root')
         toast.info('Adding Root', 'Adding Merkle root to GrimPool...')
 
@@ -152,14 +174,14 @@ export function useGrimSwap() {
 
         // Check if root is already known
         const isKnown = await publicClient.readContract({
-          ...grimPoolConfig,
+          ...grimPoolMultiTokenConfig,
           functionName: 'isKnownRoot',
           args: [rootBytes],
         })
 
         if (!isKnown) {
           const addRootTx = await walletClient.writeContract({
-            ...grimPoolConfig,
+            ...grimPoolMultiTokenConfig,
             functionName: 'addKnownRoot',
             args: [rootBytes],
           })
@@ -195,20 +217,37 @@ export function useGrimSwap() {
         )
         const hookData = encodeHookData(contractProof)
 
-        // Step 7: Execute swap through PoolHelper
+        // Step 7: Execute swap through PoolHelper (V3 - dynamic direction)
         setState('submitting')
         toast.info('Submitting', 'Executing private swap...')
 
         const poolKey = params.poolKey || DEFAULT_POOL_KEY
+
+        // V3: Determine swap direction based on token addresses
+        const { zeroForOne, sqrtPriceLimitX96 } = getSwapDirection(
+          params.fromToken,
+          params.toToken,
+          poolKey
+        )
+
+        // Log swap details for debugging
+        console.log('V3 Private Swap:', {
+          fromToken: params.fromToken,
+          toToken: params.toToken,
+          zeroForOne,
+          sqrtPriceLimitX96: sqrtPriceLimitX96.toString(),
+          amount: depositNote.amount.toString(),
+          poolKey,
+        })
 
         const hash = await walletClient.writeContract({
           ...poolHelperConfig,
           functionName: 'swap',
           args: [
             poolKey,
-            true, // zeroForOne (assuming Token A -> Token B)
+            zeroForOne, // V3: Dynamic direction based on tokens
             -BigInt(depositNote.amount), // exact input (negative for exact in)
-            MIN_SQRT_PRICE, // sqrtPriceLimitX96
+            sqrtPriceLimitX96, // V3: Dynamic price limit based on direction
             hookData, // hookData contains recipient info for ZK swap
           ],
         })

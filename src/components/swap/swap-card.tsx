@@ -13,9 +13,9 @@ import { useStateView, useDepositNotes, useMerkleTree, useStealthAddresses } fro
 import { useQuoter, formatQuoteOutput } from '@/hooks/use-quoter'
 import { useNativeBalance, useTokenBalance } from '@/hooks/use-token-balance'
 import { DEFAULT_FROM_TOKEN, DEFAULT_TO_TOKEN, USDC } from '@/lib/tokens'
-import { DEFAULT_POOL_KEY, MIN_SQRT_PRICE, MAX_SQRT_PRICE } from '@/lib/contracts'
+import { DEFAULT_POOL_KEY, MIN_SQRT_PRICE, MAX_SQRT_PRICE, isNativeToken } from '@/lib/contracts'
 import { getRelayerInfo, submitToRelayer, formatProofForRelayer, createSwapParams, type RelayerInfo } from '@/lib/relayer'
-import { parseUnits, formatUnits } from 'viem'
+import { parseUnits, formatUnits, type Address } from 'viem'
 
 type SwapState = 'idle' | 'preparing' | 'generating-proof' | 'submitting' | 'success' | 'error'
 
@@ -44,9 +44,14 @@ export function SwapCard() {
   const cardRef = useRef<HTMLDivElement>(null)
   const glowRef = useRef<HTMLDivElement>(null)
 
-  // Get deposit notes for ZK swap
+  // Get deposit notes for ZK swap - filter by selected fromToken
   const { notes, spendNote } = useDepositNotes()
-  const availableNotes = notes.filter(n => !n.spent && n.leafIndex !== undefined)
+  const availableNotes = notes.filter(n =>
+    !n.spent &&
+    n.leafIndex !== undefined &&
+    // Filter by token if tokenAddress is stored in note
+    (!n.tokenAddress || n.tokenAddress.toLowerCase() === fromToken.address.toLowerCase())
+  )
 
   // Merkle tree sync with on-chain data
   const { getProof: getMerkleProof } = useMerkleTree()
@@ -264,12 +269,23 @@ export function SwapCard() {
         leafIndex: suitableNote.leafIndex!, // Use note's leafIndex, not proof's
       }
 
-      // Calculate expected USDC output: convert ETH wei to ETH, multiply by price, apply slippage, convert to USDC smallest units
-      // noteAmount is in wei (18 decimals), currentPrice is USDC per ETH, output needs 6 decimals
-      const noteAmountEth = Number(noteAmount) / 1e18 // Convert wei to ETH
-      const expectedOutputUsdc = noteAmountEth * (currentPrice ?? 0) * 0.99 // Apply 1% slippage buffer
+      // Calculate expected output based on swap direction
+      // currentPrice is USDC per ETH (e.g., 2500 means 1 ETH = 2500 USDC)
+      const noteAmountFormatted = Number(noteAmount) / Math.pow(10, fromToken.decimals)
+      let expectedOutputAmount: number
+
+      if (zeroForOne) {
+        // ETH → USDC: multiply by price
+        expectedOutputAmount = noteAmountFormatted * (currentPrice ?? 0) * 0.99
+      } else {
+        // USDC → ETH: divide by price
+        expectedOutputAmount = currentPrice && currentPrice > 0
+          ? (noteAmountFormatted / currentPrice) * 0.99
+          : 0
+      }
+
       const expectedOutput = currentPrice && currentPrice > 0
-        ? BigInt(Math.floor(expectedOutputUsdc * 1e6)) // Convert to USDC smallest units (6 decimals)
+        ? BigInt(Math.floor(expectedOutputAmount * Math.pow(10, toToken.decimals)))
         : parseUnits(toAmount || '0', toToken.decimals)
 
       const proofResult = await generateProof(
@@ -326,6 +342,12 @@ export function SwapCard() {
       const sqrtPriceLimitX96 = zeroForOne ? MIN_SQRT_PRICE : MAX_SQRT_PRICE
 
       const formattedProof = formatProofForRelayer(proofResult.proof, proofResult.publicSignals)
+
+      // V3: Pass inputToken for ERC20 swaps (not needed for ETH)
+      const inputToken = isNativeToken(fromToken.address as Address)
+        ? undefined
+        : fromToken.address as Address
+
       const relayResponse = await submitToRelayer({
         proof: formattedProof.proof,
         publicSignals: formattedProof.publicSignals,
@@ -333,7 +355,8 @@ export function SwapCard() {
           DEFAULT_POOL_KEY,
           zeroForOne,
           -noteAmount,
-          sqrtPriceLimitX96
+          sqrtPriceLimitX96,
+          inputToken
         ),
       })
 
@@ -357,7 +380,7 @@ export function SwapCard() {
       }
 
       const swappedAmount = formatUnits(noteAmount, fromToken.decimals)
-      toast.success('Swap Complete', `Swapped ${swappedAmount} ${fromToken.symbol} → USDC`)
+      toast.success('Swap Complete', `Swapped ${swappedAmount} ${fromToken.symbol} → ${toToken.symbol}`)
 
       // Reset form after delay
       setTimeout(() => {
@@ -528,7 +551,7 @@ export function SwapCard() {
                   {isPrivacyPool ? (
                     <span className="flex items-center gap-1.5">
                       <Lock className="w-3.5 h-3.5" />
-                      Privacy Pool (ETH → USDC)
+                      Privacy Pool ({fromToken.symbol} → {toToken.symbol})
                     </span>
                   ) : (
                     <span>Pool Active</span>
@@ -565,9 +588,9 @@ export function SwapCard() {
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-blood-crimson flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm text-blood-crimson font-medium">No Deposit Notes</p>
+                  <p className="text-sm text-blood-crimson font-medium">No {fromToken.symbol} Deposit Notes</p>
                   <p className="text-xs text-mist-gray mt-1">
-                    Go to <a href="/wallet" className="text-ethereal-cyan hover:underline">Grimoire</a> to deposit ETH first.
+                    Go to <a href="/wallet" className="text-ethereal-cyan hover:underline">Grimoire</a> to deposit {fromToken.symbol} first.
                   </p>
                 </div>
               </div>
@@ -580,10 +603,10 @@ export function SwapCard() {
               <div className="flex items-center justify-between text-xs mb-2">
                 <span className="text-mist-gray flex items-center gap-1.5">
                   <Wallet className="w-3.5 h-3.5" />
-                  Deposit Notes
+                  {fromToken.symbol} Deposit Notes
                 </span>
                 <span className="text-ethereal-cyan font-mono font-medium">
-                  {totalNotesBalance.toFixed(4)} ETH
+                  {totalNotesBalance.toFixed(fromToken.decimals > 6 ? 4 : 2)} {fromToken.symbol}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
@@ -591,7 +614,7 @@ export function SwapCard() {
                   {availableNotes.length} note{availableNotes.length > 1 ? 's' : ''} available
                 </span>
                 <span className="text-mist-gray">
-                  Swapping: <span className="text-spectral-green font-mono">{firstNoteAmount.toFixed(4)} ETH</span>
+                  Swapping: <span className="text-spectral-green font-mono">{firstNoteAmount.toFixed(fromToken.decimals > 6 ? 4 : 2)} {fromToken.symbol}</span>
                 </span>
               </div>
             </div>
@@ -625,7 +648,7 @@ export function SwapCard() {
                 </a>
               </div>
               <p className="text-xs text-mist-gray mt-1">
-                USDC sent to stealth address. Check Grimoire to claim.
+                {toToken.symbol} sent to stealth address. Check Grimoire to claim.
               </p>
             </div>
           )}
@@ -636,7 +659,7 @@ export function SwapCard() {
             amount={fromAmount}
             onAmountChange={setFromAmount}
             token={fromToken}
-            onTokenSelect={isPrivacyPool ? undefined : () => openTokenSelector('from')}
+            onTokenSelect={() => openTokenSelector('from')}
             balance={getBalance(fromToken.symbol)}
             disabled={isSwapping || (isPrivacyPool && availableNotes.length > 0)}
             className="mb-2"
@@ -646,8 +669,8 @@ export function SwapCard() {
           <div className="flex justify-center -my-2 relative z-10">
             <button
               onClick={handleFlipTokens}
-              disabled={isSwapping || isPrivacyPool}
-              title={isPrivacyPool ? "Privacy pool only supports ETH → USDC" : "Swap direction"}
+              disabled={isSwapping}
+              title="Swap direction"
               className={cn(
                 'swap-arrow p-3 rounded-xl',
                 'bg-obsidian border border-arcane-purple/30',
@@ -666,7 +689,7 @@ export function SwapCard() {
             amount={toAmount}
             onAmountChange={setToAmount}
             token={toToken}
-            onTokenSelect={isPrivacyPool ? undefined : () => openTokenSelector('to')}
+            onTokenSelect={() => openTokenSelector('to')}
             balance={getBalance(toToken.symbol)}
             disabled
             className="mt-2 mb-4"

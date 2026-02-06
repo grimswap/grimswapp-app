@@ -221,7 +221,7 @@ export function HeroSection() {
             lineHeight: 1.6,
           }}
         >
-          Privacy-preserving token swaps powered by ring signatures and stealth addresses. Trade invisibly on Uniswap v4.
+          Privacy-preserving token swaps powered by ZK-SNARK proofs and stealth addresses. Trade invisibly on Uniswap v4.
         </p>
 
         {/* CTA Button */}
